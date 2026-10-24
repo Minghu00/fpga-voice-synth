@@ -1,7 +1,7 @@
 //=============================================================================
 // sine_rom.v  --  shared 1024 x 16-bit signed sine table
 //
-//  Contents of rtl/sine_1024.mem are TWO'S COMPLEMENT SIGNED values
+//  Contents of rtl/audio/sine_1024.mem are TWO'S COMPLEMENT SIGNED values
 //      round(32767 * sin(2*pi*i/1024)),  i = 0 .. 1023
 //  Verifying points:  i=0 -> 0000, i=256 -> 7FFF, i=512 -> 0000,
 //                     i=768 -> 8001 (negative peak), i=1023 -> FF37
@@ -12,8 +12,9 @@
 //  regenerated as signed, so read it directly.
 //
 //  $readmemh path is relative to the project root; both the Gowin flow
-//  (gw_sh opened on poly_synth.gprj) and the iverilog flow (run from the
-//  project root) resolve "rtl/sine_1024.mem" correctly.
+//  (gw_sh opened on *.gprj) and the iverilog flow (run from the project
+//  root) resolve "rtl/audio/sine_1024.mem" correctly.  If the table is
+//  ever moved again, this is the ONLY line that needs to change.
 //=============================================================================
 `timescale 1ns / 1ps
 
@@ -26,7 +27,7 @@ module sine_rom (
     reg [15:0] rom [0:1023];
 
     initial begin
-        $readmemh("rtl/sine_1024.mem", rom);
+        $readmemh("rtl/audio/sine_1024.mem", rom);
     end
 
     always @(posedge clk) begin

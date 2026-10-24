@@ -27,9 +27,11 @@
 //      clk27     H11                       rst_n     T3  (Silicon Key_1)
 //      tp_scl    P8   (J14-8  MIC_DAT0)    tp_sdo    T8  (J14-7  MIC_DAT1)
 //      i2s_bclk  R8   (J14-9  MIC_DAT2)    i2s_lrclk T7  (J14-10 MIC_DAT3)
-//      i2s_din   P6   (J14-11 MIC_WS)
+//      i2s_din   T6   (J14-11 MIC_BCK)     test_sw   P6  (J14-12 MIC_WS)
+//                                       ^^ P6/T6 are pin-swapped on J14:
+//                                          pin 11 = T6, pin 12 = P6.
 //      dip[3:0]  E9 E8 T4 T5  (SW3 positions 1..4, 1.5 V bank)
-//      lcd_*     J7 40-pin FPC, see LCD鎺ュ彛鏄犲皠.md
+//      lcd_*     J7 40-pin FPC, see LCD接口映射.md
 //=============================================================================
 `timescale 1ns / 1ps
 

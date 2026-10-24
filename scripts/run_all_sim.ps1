@@ -6,19 +6,22 @@ Set-Location D:\Gowin\voice
 $IV  = "D:\Gowin\tools\iverilog\bin\iverilog.exe"
 $VVP = "D:\Gowin\tools\iverilog\bin\vvp.exe"
 
+# ---- RTL 路径（按板块分目录；改动目录结构时只改这一块） ----------------------
 $RTL = @(
- "rtl/top_inst.v","rtl/frame_gen.v","rtl/ttp229_rx.v","rtl/keymap8.v",
- "rtl/inc_lut.v","rtl/sine_rom.v","rtl/osc_bank.v","rtl/adsr.v","rtl/mixer16.v",
- "rtl/i2s_tx.v","rtl/audio_out.v","rtl/lcd_timing.v","rtl/wave_buf.v","rtl/lcd_scope.v"
+ "rtl/top/top_inst.v",
+ "rtl/audio/frame_gen.v","rtl/input/ttp229_rx.v","rtl/input/keymap8.v",
+ "rtl/audio/inc_lut.v","rtl/audio/sine_rom.v","rtl/audio/osc_bank.v",
+ "rtl/audio/adsr.v","rtl/audio/mixer16.v","rtl/audio/i2s_tx.v","rtl/audio/audio_out.v",
+ "rtl/display/lcd_timing.v","rtl/display/wave_buf.v","rtl/display/lcd_scope.v"
 )
 
 $suites = @(
-  @{ n="tb_i2s_tx";    f=@("rtl/i2s_tx.v","sim/tb_i2s_tx.v") },
-  @{ n="tb_audio_out"; f=@("rtl/audio_out.v","rtl/i2s_tx.v","sim/tb_audio_out.v") },
-  @{ n="tb_adsr";      f=@("rtl/adsr.v","sim/tb_adsr.v") },
-  @{ n="tb_mixer16";   f=@("rtl/mixer16.v","sim/tb_mixer16.v") },
-  @{ n="tb_osc_bank";  f=@("rtl/inc_lut.v","rtl/sine_rom.v","rtl/osc_bank.v","sim/tb_osc_bank.v") },
-  @{ n="tb_ttp229_rx"; f=@("rtl/ttp229_rx.v","sim/ttp229_model.v","sim/tb_ttp229_rx.v") },
+  @{ n="tb_i2s_tx";    f=@("rtl/audio/i2s_tx.v","sim/tb_i2s_tx.v") },
+  @{ n="tb_audio_out"; f=@("rtl/audio/audio_out.v","rtl/audio/i2s_tx.v","sim/tb_audio_out.v") },
+  @{ n="tb_adsr";      f=@("rtl/audio/adsr.v","sim/tb_adsr.v") },
+  @{ n="tb_mixer16";   f=@("rtl/audio/mixer16.v","sim/tb_mixer16.v") },
+  @{ n="tb_osc_bank";  f=@("rtl/audio/inc_lut.v","rtl/audio/sine_rom.v","rtl/audio/osc_bank.v","sim/tb_osc_bank.v") },
+  @{ n="tb_ttp229_rx"; f=@("rtl/input/ttp229_rx.v","sim/ttp229_model.v","sim/tb_ttp229_rx.v") },
   @{ n="tb_inst";      f=($RTL + @("sim/pll_sys_sim.v","sim/ttp229_model.v","sim/tb_inst.v")) }
 )
 

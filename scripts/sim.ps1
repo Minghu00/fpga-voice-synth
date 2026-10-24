@@ -7,9 +7,12 @@
 #
 #  Notes
 #   * iverilog must be run from the project root, because sine_rom.v loads
-#     "rtl/sine_1024.mem" with a relative path (the same path Gowin uses).
+#     "rtl/audio/sine_1024.mem" with a relative path (the same path Gowin uses).
 #   * pll_sys.v is replaced by sim/pll_sys_sim.v during simulation; the real
 #     rPLL primitive cannot be simulated with Icarus.
+#   * All RTL paths below follow the board layout:
+#        rtl/top  rtl/clock  rtl/input  rtl/audio  rtl/display  rtl/legacy
+#     Change paths here only; the RTL sources themselves are location-agnostic.
 #=============================================================================
 param(
     [string]$Only = ""
@@ -26,24 +29,31 @@ if (-not (Test-Path $iverilog)) {
     exit 1
 }
 
+# ---- 板块路径 ---------------------------------------------------------------
+$A  = "rtl/audio"
+$D  = "rtl/display"
+$I  = "rtl/input"
+$C  = "rtl/clock"
+
 $rtl = @(
-    "rtl/frame_gen.v", "rtl/ttp229_rx.v", "rtl/keymap.v", "rtl/inc_lut.v",
-    "rtl/sine_rom.v", "rtl/osc_bank.v", "rtl/adsr.v", "rtl/mixer16.v",
-    "rtl/i2s_tx.v", "rtl/lat_counter.v", "rtl/lcd_timing.v", "rtl/wave_buf.v",
-    "rtl/lcd_panel.v", "rtl/keymap8.v", "rtl/lcd_scope.v", "rtl/audio_out.v"
+    "$A/frame_gen.v", "$I/ttp229_rx.v", "rtl/legacy/keymap.v", "$A/inc_lut.v",
+    "$A/sine_rom.v", "$A/osc_bank.v", "$A/adsr.v", "$A/mixer16.v",
+    "$A/i2s_tx.v", "rtl/legacy/lat_counter.v", "$D/lcd_timing.v", "$D/wave_buf.v",
+    "rtl/legacy/lcd_panel.v", "$I/keymap8.v", "$D/lcd_scope.v", "$A/audio_out.v"
 )
 
 $benches = @(
-    @{ name = "tb_i2s_tx";    src = @("sim/tb_i2s_tx.v",    "rtl/i2s_tx.v") },
-    @{ name = "tb_adsr";      src = @("sim/tb_adsr.v",      "rtl/adsr.v") },
-    @{ name = "tb_mixer16";   src = @("sim/tb_mixer16.v",   "rtl/mixer16.v") },
-    @{ name = "tb_osc_bank";  src = @("sim/tb_osc_bank.v",  "rtl/osc_bank.v", "rtl/inc_lut.v", "rtl/sine_rom.v") },
-    @{ name = "tb_lcd";       src = @("sim/tb_lcd.v",       "rtl/lcd_panel.v", "rtl/lcd_timing.v", "rtl/wave_buf.v") },
-    @{ name = "tb_ttp229_rx"; src = @("sim/tb_ttp229_rx.v", "rtl/ttp229_rx.v", "sim/ttp229_model.v") },
-    @{ name = "tb_lcd_only";  src = @("sim/tb_lcd_only.v",  "sim/pll_sys_sim.v", "rtl/top_lcd.v", "rtl/lcd_timing.v") },
-    @{ name = "tb_lcd_test";  src = @("sim/tb_lcd_test.v",  "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/top_lcd_test.v", "rtl/ttp229_rx.v", "rtl/lcd_timing.v") },
-    @{ name = "tb_inst";      src = @("sim/tb_inst.v", "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/top_inst.v", "rtl/frame_gen.v", "rtl/ttp229_rx.v", "rtl/keymap8.v", "rtl/inc_lut.v", "rtl/sine_rom.v", "rtl/osc_bank.v", "rtl/adsr.v", "rtl/mixer16.v", "rtl/i2s_tx.v", "rtl/lcd_timing.v", "rtl/wave_buf.v", "rtl/lcd_scope.v", "rtl/audio_out.v") },
-    @{ name = "tb_top";       src = @(@("sim/tb_top.v", "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/top.v") + $rtl) }
+    @{ name = "tb_i2s_tx";    src = @("sim/tb_i2s_tx.v",    "$A/i2s_tx.v") },
+    @{ name = "tb_adsr";      src = @("sim/tb_adsr.v",      "$A/adsr.v") },
+    @{ name = "tb_mixer16";   src = @("sim/tb_mixer16.v",   "$A/mixer16.v") },
+    @{ name = "tb_osc_bank";  src = @("sim/tb_osc_bank.v",  "$A/osc_bank.v", "$A/inc_lut.v", "$A/sine_rom.v") },
+    @{ name = "tb_audio_out"; src = @("sim/tb_audio_out.v", "$A/audio_out.v", "$A/i2s_tx.v") },
+    @{ name = "tb_lcd";       src = @("sim/tb_lcd.v",       "rtl/legacy/lcd_panel.v", "$D/lcd_timing.v", "$D/wave_buf.v") },
+    @{ name = "tb_ttp229_rx"; src = @("sim/tb_ttp229_rx.v", "$I/ttp229_rx.v", "sim/ttp229_model.v") },
+    @{ name = "tb_lcd_only";  src = @("sim/tb_lcd_only.v",  "sim/pll_sys_sim.v", "rtl/legacy/top_lcd.v", "$D/lcd_timing.v") },
+    @{ name = "tb_lcd_test";  src = @("sim/tb_lcd_test.v",  "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/legacy/top_lcd_test.v", "$I/ttp229_rx.v", "$D/lcd_timing.v") },
+    @{ name = "tb_inst";      src = @("sim/tb_inst.v", "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/top/top_inst.v", "$A/frame_gen.v", "$I/ttp229_rx.v", "$I/keymap8.v", "$A/inc_lut.v", "$A/sine_rom.v", "$A/osc_bank.v", "$A/adsr.v", "$A/mixer16.v", "$A/i2s_tx.v", "$D/lcd_timing.v", "$D/wave_buf.v", "$D/lcd_scope.v", "$A/audio_out.v") },
+    @{ name = "tb_top";       src = @(@("sim/tb_top.v", "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/legacy/top.v") + $rtl) }
 )
 
 $pass = 0
