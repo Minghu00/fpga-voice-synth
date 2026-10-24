@@ -39,7 +39,8 @@ $rtl = @(
     "$A/frame_gen.v", "$I/ttp229_rx.v", "rtl/legacy/keymap.v", "$A/inc_lut.v",
     "$A/sine_rom.v", "$A/osc_bank.v", "$A/adsr.v", "$A/mixer16.v",
     "$A/i2s_tx.v", "rtl/legacy/lat_counter.v", "$D/lcd_timing.v", "$D/wave_buf.v",
-    "rtl/legacy/lcd_panel.v", "$I/keymap8.v", "$D/lcd_scope.v", "$A/audio_out.v"
+    "rtl/legacy/lcd_panel.v", "$I/keymap8.v", "$D/lcd_scope.v", "$A/audio_out.v",
+    "$A/test_mode.v"
 )
 
 $benches = @(
@@ -50,9 +51,10 @@ $benches = @(
     @{ name = "tb_audio_out"; src = @("sim/tb_audio_out.v", "$A/audio_out.v", "$A/i2s_tx.v") },
     @{ name = "tb_lcd";       src = @("sim/tb_lcd.v",       "rtl/legacy/lcd_panel.v", "$D/lcd_timing.v", "$D/wave_buf.v") },
     @{ name = "tb_ttp229_rx"; src = @("sim/tb_ttp229_rx.v", "$I/ttp229_rx.v", "sim/ttp229_model.v") },
+    @{ name = "tb_test_mode"; src = @("sim/tb_test_mode.v", "$A/test_mode.v") },
     @{ name = "tb_lcd_only";  src = @("sim/tb_lcd_only.v",  "sim/pll_sys_sim.v", "rtl/legacy/top_lcd.v", "$D/lcd_timing.v") },
     @{ name = "tb_lcd_test";  src = @("sim/tb_lcd_test.v",  "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/legacy/top_lcd_test.v", "$I/ttp229_rx.v", "$D/lcd_timing.v") },
-    @{ name = "tb_inst";      src = @("sim/tb_inst.v", "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/top/top_inst.v", "$A/frame_gen.v", "$I/ttp229_rx.v", "$I/keymap8.v", "$A/inc_lut.v", "$A/sine_rom.v", "$A/osc_bank.v", "$A/adsr.v", "$A/mixer16.v", "$A/i2s_tx.v", "$D/lcd_timing.v", "$D/wave_buf.v", "$D/lcd_scope.v", "$A/audio_out.v") },
+    @{ name = "tb_inst";      src = @("sim/tb_inst.v", "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/top/top_inst.v", "$A/frame_gen.v", "$I/ttp229_rx.v", "$I/keymap8.v", "$A/inc_lut.v", "$A/sine_rom.v", "$A/osc_bank.v", "$A/adsr.v", "$A/mixer16.v", "$A/i2s_tx.v", "$D/lcd_timing.v", "$D/wave_buf.v", "$D/lcd_scope.v", "$A/audio_out.v", "$A/test_mode.v") },
     @{ name = "tb_top";       src = @(@("sim/tb_top.v", "sim/pll_sys_sim.v", "sim/ttp229_model.v", "rtl/legacy/top.v") + $rtl) }
 )
 

@@ -69,6 +69,7 @@ module lcd_scope #(
     input  wire [1:0]           oct,
     input  wire [1:0]           timbre,
     input  wire [3:0]           vol,            // audio_out gain index, for the status strip
+    input  wire                 test_en,        // 1 = on-site self test is active
 
     // panel
     output wire         lcd_dclk,
@@ -194,6 +195,7 @@ module lcd_scope #(
     reg        [3:0]  lev_q;
     reg               key_q;
     reg               mode_q;
+    reg               tst_q;            // test_en, pipelined with the geometry
     reg        [9:0]  x_q, y_q;
     reg        [1:0]  oct_q, tim_q;
     reg        [3:0]  vol_q4;
@@ -258,6 +260,7 @@ module lcd_scope #(
             btop_q <= 16'sd272;
             lev_q  <= 4'd0;    key_q <= 1'b0;
             mode_q <= 1'b0;
+            tst_q  <= 1'b0;
             x_q    <= 10'd0;   y_q   <= 10'd0;
             oct_q  <= 2'd0;    tim_q <= 2'd0;
             wlo_q  <= 16'sd0;  whi_q <= 16'sd0;
@@ -353,6 +356,7 @@ module lcd_scope #(
             lev_q  <= env_live[15:12];
             key_q  <= key_gate[kcell[2:0]];
             mode_q <= latch_mode_w;
+            tst_q  <= test_en;
             oct_q  <= oct;
             tim_q  <= timbre;
             vol_q4 <= vol;
@@ -411,6 +415,10 @@ module lcd_scope #(
     wire        vol_on  = (sblk >= 5'd8) && (sblk < 5'd13) &&
                           ((sblk - 5'd8) <= {1'b0, vol_lvl});
 
+    // TEST flag: the six right-hand blocks of the status strip go red while
+    // the on-site self test is running (x 336..479).
+    wire        tst_on  = tst_q && (sblk >= 5'd14);
+
     always @(posedge clk) begin
         if (!rst_n) begin
             nr <= 5'd1;  ng <= 6'd4;  nb <= 5'd9;
@@ -450,6 +458,9 @@ module lcd_scope #(
                 end else if (vol_on) begin
                     // volume ladder lights up left to right as gain rises
                     nr <= 5'd31; ng <= 6'd40; nb <= 5'd2;
+                end else if (tst_on) begin
+                    // TEST flag: solid red blocks, unmistakable at a glance
+                    nr <= 5'd31; ng <= 6'd0;  nb <= 5'd0;
                 end
             end else begin
                 if (bar_hit) begin

@@ -166,6 +166,40 @@ module top_inst #(
     );
 
     //------------------------------------------------------------------
+    // on-site self test ("测试模式")
+    //
+    // Holds every voice on, with eight fixed and well spread pitches, a pure
+    // sine timbre and a fixed gain, so a spectrum analyser can count the live
+    // oscillators one by one.  Entered by holding Key_3 while the board comes
+    // out of reset; see test_mode.v for the full rationale.
+    //------------------------------------------------------------------
+    wire [7:0]  gate_t;
+    wire [39:0] note_t;
+    wire [1:0]  oct_t;
+    wire [1:0]  timbre_t;
+    wire [3:0]  vol_t;
+    wire        test_en;
+
+    test_mode #(
+        .VOICES (VOICES)
+    ) u_test (
+        .clk       (clk_sys),
+        .rst_n     (srst_n),
+        .vup_n     (vup_sw),
+        .gate_in   (gate_live),
+        .note_in   (note_flat),
+        .timbre_in (timbre),
+        .oct_in    (oct),
+        .vol_in    (vol_raw),
+        .test_en   (test_en),
+        .gate_out  (gate_t),
+        .note_out  (note_t),
+        .timbre_out(timbre_t),
+        .oct_out   (oct_t),
+        .vol_out   (vol_t)
+    );
+
+    //------------------------------------------------------------------
     // Latch (hold) mode, toggled by Silicon Key_2.
     //
     // The TTP229 chip defaults to TP3=TP4=1, i.e. "all single-key": it only
@@ -207,7 +241,10 @@ module top_inst #(
         end
     end
 
-    wire [7:0] gate = latch_mode ? latch : gate_live;
+    // Test mode wins over latch mode: it wants every voice on regardless of
+    // what the player latched before reset.
+    wire [7:0] gate = test_en ? gate_t
+                            : (latch_mode ? latch : gate_live);
 
     //------------------------------------------------------------------
     // 32 oscillators (8 voices x 4 additive harmonics)
@@ -221,9 +258,9 @@ module top_inst #(
         .clk      (clk_sys),
         .rst_n    (srst_n),
         .fc       (fc),
-        .note_flat(note_flat),
-        .timbre   (timbre),
-        .oct      (oct),
+        .note_flat(note_t),
+        .timbre   (timbre_t),
+        .oct      (oct_t),
         .raw_flat (raw_flat)
     );
 
@@ -294,7 +331,7 @@ module top_inst #(
         .frame_tick(sample_tick),
         .mix_ok    (mix_ok),
         .mix_in    (mix_out),
-        .vol_raw   (vol_raw),
+        .vol_raw   (vol_t),
         // Mute is NOT driven by a board key any more.  Every "Silicone Key_n"
         // net on the Dock has a 10 k pull-up to +1V5 and only goes low while
         // the button is pressed, so a level-sensitive mute idled HIGH and
@@ -499,9 +536,10 @@ module top_inst #(
         .latch_mode_w(latch_mode),
         .key_gate (gate),
         .env_flat (env_flat),
-        .oct      (oct),
-        .timbre   (timbre),
-        .vol      (vol_raw),
+        .oct      (oct_t),
+        .timbre   (timbre_t),
+        .vol      (vol_t),
+        .test_en  (test_en),
         .lcd_dclk (lcd_dclk),
         .lcd_hs   (lcd_hs),
         .lcd_vs   (lcd_vs),

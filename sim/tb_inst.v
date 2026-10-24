@@ -54,7 +54,9 @@ module tb_inst;
         .tp_sdo   (tp_sdo),
         .dip      (dip),
         .sw5_vol  (1'b0),
-        .vup_sw   (1'b0),
+        // vup_sw is an active-LOW board key: 1'b0 means "held down", which
+        // now latches the on-site test mode at power-up.  Keep it released.
+        .vup_sw   (1'b1),
         .test_sw  (1'b0),
         .key_btn  (key_btn),
         .tp_scl   (tp_scl),

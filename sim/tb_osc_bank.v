@@ -16,7 +16,10 @@
 
 module tb_osc_bank;
 
-    localparam [4:0] NOTE = 5'd24;          // C4 = 261.63 Hz
+    // NOTE must stay inside 0..24 now that inc_lut.v actually covers two
+    // octaves.  It used to be 5'd24 and fell through to the `default` (C4)
+    // arm of the old 13-note table; index 24 is a real C6 nowadays.
+    localparam [4:0] NOTE = 5'd0;           // C4 = 261.63 Hz
 
     reg         clk   = 1'b0;
     reg         rst_n = 1'b0;

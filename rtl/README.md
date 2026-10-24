@@ -31,7 +31,7 @@
 | 文件 | 模块 | 说明 |
 |---|---|---|
 | `frame_gen.v` | `frame_gen` | 帧内相位发生器：`fc` 0..2239，以及 `sample_tick` / `osc_ph` / `env_ph` / `mix_ph` 四个时隙标志 |
-| `inc_lut.v` | `inc_lut` | 34 个音名 → 32 位相位增量（`inc = f × 2^32 / fs`），纯组合查找 |
+| `inc_lut.v` | `inc_lut` | 25 音名（C4…C6，索引 0–24）→ 32 位相位增量（`inc = f × 2^32 / fs`），纯组合查找。溢出预算：`C6 ×4(谐波) = 0x1639E578 < 2^32`；再乘八度 ×4 就溢出，所以 `oct` 只允许 0..2 |
 | `sine_rom.v` | `sine_rom` | 1024×16 位**二进制补码有符号**正弦表，`$readmemh` 读 `rtl/audio/sine_1024.mem` |
 | `sine_1024.mem` | — | 正弦数据。**路径写死在 `sine_rom.v:29`，移动文件只改那一行** |
 | `osc_bank.v` | `osc_bank` | 核心。`VOICES` 个声部 × `VOICES×NCOMP` 个独立相位累加器，时分复用一套 ROM + 乘法器；输出 `raw_flat`（每声部 16 位有符号，叠加了各分量）。相位存 BSRAM |
@@ -39,13 +39,14 @@
 | `mixer16.v` | `mixer16` | `VOICES` 路求和 + ±32767 饱和。`MIX_SHIFT` 是统一右移（防溢出） |
 | `audio_out.v` | `audio_out` | 音量（13 位 Q8，128..4096 = 0.5×..16×，默认索引 6 = 4.0×）、静音、测试音（94 Hz −12 dBFS 方波，绕过合成器） |
 | `i2s_tx.v` | `i2s_tx` | 标准 I2S 串行器。16 位/槽，`BCLK_HALF=35` → BCLK 1.5429 MHz；帧长**精确** 2240 clk，与音频帧锁相。`load_tick` 捕获到 `shadow_l/shadow_r`，帧边界再装载 |
+| `test_mode.v` | `test_mode` | 现场测试模式。上电 1 ms 窗口内按住 Key_3 即锁存 `test_en`（粘性，断电退出）；锁存后强制 `gate=全 1`、`note_flat=NOTE_SET`（8 个隔 3 半音的音）、`timbre=0`（单分量纯正弦）、`oct=0`、`vol=2`（1.0×）。**选通结果必须在模块内打一拍再输出**，否则那级 mux 会串进 `note→inc_lut→<<oct` 最紧路径，Fmax 从 119.6 掉到 108.85 MHz |
 
 ### `display/` —— 480×272 RGB 屏
 | 文件 | 模块 | 说明 |
 |---|---|---|
 | `lcd_timing.v` | `lcd_timing` | 同步产生器。`DIV=12` → 9 MHz 像素时钟；H 480+2+41+2=525、V 272+2+10+2=286 → 59.94 Hz。HS/VS 低有效，DE 高有效 |
 | `wave_buf.v` | `wave_buf` | 512×16 双口 BSRAM，存混音历史给示波器用（同地址读写返回旧值） |
-| `lcd_scope.v` | `lcd_scope` | 全部画面。分区：y0..15 状态条（八度/音色/音量梯）、y16..47 灰阶、y48..111 波形示波器（**过零触发**）、y112..175 8 根包络柱、y176..207 16 色块、y208..271 8 个触摸格 |
+| `lcd_scope.v` | `lcd_scope` | 全部画面。纵向分区（`localparam WAVE_Y0/Y1=28/164`、`ENV_Y0/Y1=164/232`、`STAT_Y0/Y1=232/240`、`BARS_Y0=240`）：`y0..27` 8 个触摸格、`y28..163` 波形示波器（**过零触发**，窗口起点每帧只锁一次）、`y164..231` 实心包络柱、`y232..239` 状态条、`y240..271` 8 根逐声部包络柱（每根 60 px）。状态条横分 16 块（`sblk=(x×2731)>>15`，每块 30 px）：`sblk 0..3` 八度梯、`4..7` 音色梯、`8..12` 音量梯、`14..15` **TEST 红块**；另外 `y<18 && x>463` 是锁存模式紫标记 |
 
 ### `legacy/` —— 历史版本（仍可综合，用于对照）
 `top.v`（4 声部）、`keymap.v`、`lat_counter.v`、`lcd_panel.v`、`top_lcd.v`、`top_lcd_test.v`。
