@@ -1,0 +1,23 @@
+# 统一换行：源码一律 LF 入库，也保持 LF 检出，避免 Windows 下混行。
+* text=auto eol=lf
+
+*.v        text eol=lf
+*.sv       text eol=lf
+*.mem      text eol=lf
+*.cst      text eol=lf
+*.sdc      text eol=lf
+*.tcl      text eol=lf
+*.gprj     text eol=lf
+*.ps1      text eol=lf
+*.md       text eol=lf
+*.txt      text eol=lf
+*.html     text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# 二进制资料保持原样
+*.pdf      binary
+*.png      binary
+*.jpg      binary
+*.fs       binary
+*.bin      binary

@@ -1,0 +1,130 @@
+// ============================================================
+//  inst.cst  --  8-key instrument: touch + I2S + 480x272 RGB panel
+//
+//  40P RGB LCD (J7, FPC 0.5mm) -- pin for pin from the Sipeed
+//  RGB_lcd/480x272_4.3inch_lcd example for this exact panel.
+//  Dock only brings out R0-R4 / G0-G5 / B0-B4, i.e. RGB555 red and
+//  blue, 6 bit green.
+//
+//  I2S goes to the J14 "MIC Array Conn" header, NOT to the on-board
+//  PT8211 (N15/P15/P16) -- J14 has +3V3 / GND next to the data pins,
+//  which is what a MAX98357 breakout needs.
+// ============================================================
+
+// ------------------------- 时钟 -------------------------
+IO_LOC  "clk27" H11;
+IO_PORT "clk27" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// ------------------------- 复位 -------------------------
+// Silicon Key_1 = T3, Bank4 is 1.5 V -> must be LVCMOS15
+IO_LOC  "rst_n" T3;
+IO_PORT "rst_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+
+// ---------------- TTP229 8 键触摸（J14 MIC 排针） ----------------
+// J14 = Conn_02x06_Odd_Even "MIC Array Conn", carries +3V3 and GND,
+// so the module can be powered straight from the header.
+//   tp_scl -> J14 pin 8  (MIC_DAT0)
+//   tp_sdo -> J14 pin 7  (MIC_DAT1)
+IO_LOC  "tp_scl" P8;
+IO_PORT "tp_scl" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "tp_sdo" T8;
+IO_PORT "tp_sdo" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// --------------------- I2S -> MAX98357 ---------------------
+//
+//  J14 "MIC Array Conn" (2x6, 2.54 mm) net names taken from the Dock
+//  schematic, page 1 sheet 007_Things:
+//
+//      ball   net name       J14 pin
+//      R8     MIC_DAT2        9        <- i2s_bclk
+//      T7     MIC_DAT3       10        <- i2s_lrclk
+//      T6     MIC_BCK        11        <- i2s_din
+//      P6     MIC_WS         12        <- test_sw (spare, self-test input)
+//
+//  PITFALL, worth one hour of debugging: MIC_BCK and MIC_WS are easy to
+//  swap.  The schematic wires DFP_IOR53_P (= P6) to MIC_WS and
+//  DFP_IOR53_N (= T6) to MIC_BCK, so DID YOU KNOW that pin 11 is T6, not
+//  P6.  An earlier revision of this file put i2s_din on P6 while the
+//  wiring table told the user to plug into pin 11, so the FPGA drove pin
+//  12 and pin 11 floated: BCLK and LRCK were perfect and the amplifier
+//  stayed stone silent with no data on DIN.
+IO_LOC  "i2s_bclk"  R8;
+IO_PORT "i2s_bclk"  IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "i2s_lrclk" T7;
+IO_PORT "i2s_lrclk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "i2s_din"   T6;
+IO_PORT "i2s_din"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// --------------------- self-test tone input ---------------------
+//  Pull DOWN so that a floating pin means "test tone off".  Tie it to
+//  +3V3 (J14 pin 1 or 2) with one jumper wire and the FPGA emits a
+//  loud 94 Hz square wave through the same I2S pins, completely
+//  independent of the touch panel and of the synthesiser.  If that
+//  buzz is inaudible the fault is downstream of the FPGA: no data on
+//  DIN, amplifier in shutdown (SD not grounded) or no supply.
+//  NOTE: DRIVE only applies to outputs.  Gowin rejects the whole cst with
+//  "Illegal port attribute value specified 'DRIVE = 8'" if an INPUT carries it.
+IO_LOC  "test_sw"   P6;
+IO_PORT "test_sw"   IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+// --------------- 板载 5 位拨码 SW3 = 八度 / 音色 ---------------
+// SW3 position 1..4 -> dip[0..3] = {timbre[1:0], octave[1:0]}
+// All four are Bank4 (1.5 V) so IO_TYPE must be LVCMOS15.
+// The switch pulls the net to +1V5 through a 1.5 K resistor and to GND
+// through another 1.5 K, so PULL_MODE=DOWN is only a belt-and-braces
+// default for the "off" state.
+IO_LOC  "key_btn" T2;
+IO_PORT "key_btn" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+IO_LOC  "dip[0]" E9;
+IO_PORT "dip[0]" IO_TYPE=LVCMOS15 PULL_MODE=DOWN;
+IO_LOC  "dip[1]" E8;
+IO_PORT "dip[1]" IO_TYPE=LVCMOS15 PULL_MODE=DOWN;
+IO_LOC  "dip[2]" T4;
+IO_PORT "dip[2]" IO_TYPE=LVCMOS15 PULL_MODE=DOWN;
+IO_LOC  "dip[3]" T5;
+IO_PORT "dip[3]" IO_TYPE=LVCMOS15 PULL_MODE=DOWN;
+
+// ------------------ 音量 / 测试音 ------------------
+//   sw5_vol -> SW3 position 5  (C7, Bank4 -> LVCMOS15): +1 volume step
+//   vup_sw  -> Silicon Key_3 (D7, Bank4 -> LVCMOS15): VOLUME UP button
+//              Each press steps the gain by one through +12..+24 dB and wraps
+//              back to +12 dB, so it can never land on silence.
+//              It used to be the mute key -- that was the silence bug: every
+//              Silicone Key net has a 10 k pull-up to +1V5 and only goes low
+//              while pressed, so a level-sensitive mute idled HIGH.
+//              (B10 = RECONFIG_N, T10 = dedicated SSPI and C6 = JTAG, so the
+//               other board keys are unusable; Key_3 is free because Key_1 is
+//               the reset and Key_2 is the latch toggle)
+IO_LOC  "sw5_vol" C7;
+IO_PORT "sw5_vol" IO_TYPE=LVCMOS15 PULL_MODE=DOWN;
+IO_LOC  "vup_sw" D7;
+IO_PORT "vup_sw" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+
+// The test-tone input now lives on P6 / J14 pin 12, see the I2S block above.
+// Tie J14 pin 12 to +3V3 (pin 1 or 2) with one jumper wire to hear a loud
+// 94 Hz square wave straight from the I2S pins.
+
+// --------------------- 40P RGB LCD（480x272） ---------------------
+IO_LOC  "lcd_dclk" R9;   IO_PORT "lcd_dclk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_hs"   A15;  IO_PORT "lcd_hs"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_vs"   D14;  IO_PORT "lcd_vs"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_de"   E15;  IO_PORT "lcd_de"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "lcd_r[0]" L9;   IO_PORT "lcd_r[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[1]" N8;   IO_PORT "lcd_r[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[2]" N9;   IO_PORT "lcd_r[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[3]" N7;   IO_PORT "lcd_r[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[4]" N6;   IO_PORT "lcd_r[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "lcd_g[0]" D11;  IO_PORT "lcd_g[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[1]" A11;  IO_PORT "lcd_g[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[2]" B11;  IO_PORT "lcd_g[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[3]" P7;   IO_PORT "lcd_g[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[4]" R7;   IO_PORT "lcd_g[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[5]" D10;  IO_PORT "lcd_g[5]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "lcd_b[0]" B12;  IO_PORT "lcd_b[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[1]" C12;  IO_PORT "lcd_b[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[2]" B13;  IO_PORT "lcd_b[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[3]" A14;  IO_PORT "lcd_b[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[4]" B14;  IO_PORT "lcd_b[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

@@ -1,0 +1,173 @@
+//=============================================================================
+// keymap8.v  --  8-key TTP229 pad  ->  8 piano gates + octave / timbre / volume
+//
+//  The TTP229 module sends 8 bits (it is the 8-key variant of the board), and
+//  we use those 8 pads as one octave of white keys:
+//
+//      TP0  TP1  TP2  TP3  TP4  TP5  TP6  TP7
+//       C4   D4   E4   F4   G4   A4   B4   C5
+//
+//  Voice index == key index, so voice i plays the note that belongs to TPi.
+//
+//  Octave and timbre come from the on-board 5-way DIP switch SW3 instead of
+//  from touch keys (all eight pads are needed as keys now).  A DIP switch is
+//  a static level, so it needs no debouncing -- just two sync flops and a
+//  latch at the audio sample rate.
+//
+//      ctrl[1:0] -> octave  0..3   (phase increment shifted left 0/1/2)
+//      ctrl[3:2] -> timbre  0..3   (organ / square / saw / triangle)
+//
+//  NOTE: octave 3 would need inc * 8, and the largest table entry already
+//  needs *4 for the 4th harmonic; inc_lut is only safe up to *4 overall, so
+//  the octave shift is clamped to 0..2 here as well.
+//
+//  VOLUME-UP BUTTON
+//    Silicon Key_3 (D7) is a VOLUME-UP button.  Each press steps the gain
+//    index by one through 6..10 (+12 dB .. +24 dB) and wraps back to 6, so the
+//    instrument is always audible and a wrong number of presses can never
+//    leave it silent.
+//
+//    It used to be the MUTE button, and that is what made the board dead
+//    silent: every "Silicone Key_n" net on the Dock has a 10 k pull-up to
+//    +1V5 and is only pulled to GND while the button is pressed, so the pin
+//    idles HIGH -- mute was asserted at power-up and the DAC received zeros.
+//    Any board key wired straight to a level-sensitive control has this
+//    polarity trap; the fix is to make the control a one-shot EDGE (a press),
+//    not a level.  The debounce below requires the pressed level to hold for
+//    VDB samples (256 samples at 48.2 kHz ~ 5.3 ms), which both removes
+//    contact bounce and makes the polarity unambiguous.
+//
+//    SW3 position 5 still adds one extra volume step on top (+1 index).
+//
+//  EXTRA STATIC SWITCHES
+//    test  -> test tone (off-board switch / wire to 3V3)
+//  Pure pass-through so that every audio control reaches audio_out.v through
+//  one already-synchronised path.
+//=============================================================================
+`timescale 1ns / 1ps
+
+module keymap8 #(
+    // pressed level must be stable for VDB audio samples before it is accepted
+    parameter integer VDB = 256
+)(
+    input  wire        clk,
+    input  wire        rst_n,
+    input  wire        en,              // one clk pulse per audio sample
+    input  wire [15:0] key_raw,         // 1 = pressed
+    input  wire [3:0]  ctrl,            // {timbre[1:0], octave[1:0]} from DIP
+    input  wire [1:0]  ctrl5,           // {<unused>, vol_lsb}  SW3-pos5
+    input  wire        vup,             // Silicon Key_3: volume up, pressed = 0
+    input  wire        test,            // test tone request
+    output wire [7:0]  gate,            // 1 = sounding note key
+    output wire [5*8-1:0] note_flat,    // 8 x 5 bit note index
+    output reg  [1:0]  oct,
+    output reg  [1:0]  timbre,
+    output wire [3:0]  vol_raw,         // 4 bit volume index into audio_out
+    output reg         test_o
+);
+
+    // note index per key, packed as {key7, key6, ... key0}
+    //   C4=0 D4=2 E4=4 F4=5 G4=7 A4=9 B4=11 C5=12   (see inc_lut.v)
+    localparam [5*8-1:0] NOTE_TAB =
+        { 5'd12, 5'd11, 5'd9, 5'd7,
+          5'd5,  5'd4,  5'd2, 5'd0 };
+
+    assign gate      = key_raw[7:0];
+    assign note_flat = NOTE_TAB;
+
+    //------------------------------------------------------------------
+    // two-flop synchroniser for the static DIP levels
+    //------------------------------------------------------------------
+    reg [3:0] c_s0, c_s1;
+    reg [1:0] c5_s0, c5_s1, c5_s2;
+    reg       t_s0, t_s1, t_s2;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            c_s0  <= 4'd0;
+            c_s1  <= 4'd0;
+            c5_s0 <= 2'd0;
+            c5_s1 <= 2'd0;
+            c5_s2 <= 2'd0;
+            t_s0  <= 1'b0;
+            t_s1  <= 1'b0;
+            t_s2  <= 1'b0;
+        end else begin
+            c_s0  <= ctrl;
+            c_s1  <= c_s0;
+            c5_s0 <= ctrl5;
+            c5_s1 <= c5_s0;
+            c5_s2 <= c5_s1;
+            t_s0  <= test;
+            t_s1  <= t_s0;
+            t_s2  <= t_s1;
+        end
+    end
+
+    //------------------------------------------------------------------
+    // volume-up button: sync, debounce, one-shot press
+    //
+    // The board pulls the net UP and the switch shorts it to GND, so an
+    // un-pressed key reads 1 and a press reads 0.
+    //------------------------------------------------------------------
+    reg        v_s0, v_s1;
+    reg        v_stable, v_stable_d;
+    reg [7:0]  v_cnt;
+    wire       v_press = v_stable_d && !v_stable;   // 1 clk pulse on press
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            v_s0       <= 1'b1;    // power-up state of an un-pressed key
+            v_s1       <= 1'b1;
+            v_stable   <= 1'b1;
+            v_stable_d <= 1'b1;
+            v_cnt      <= 8'd0;
+        end else begin
+            v_s0 <= vup;
+            v_s1 <= v_s0;
+            if (v_s1 == v_stable) begin
+                v_cnt <= 8'd0;
+            end else if (v_cnt == (VDB[7:0] - 8'd1)) begin
+                v_stable <= v_s1;      // new level accepted
+                v_cnt    <= 8'd0;
+            end else begin
+                v_cnt <= v_cnt + 8'd1;
+            end
+            v_stable_d <= v_stable;
+        end
+    end
+
+    //------------------------------------------------------------------
+    // volume index, 6..10, wraps back to 6 after 10
+    //------------------------------------------------------------------
+    reg [3:0] vol_idx;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            vol_idx <= 4'd6;           // +12 dB, see audio_out.v
+        else if (v_press)
+            vol_idx <= (vol_idx >= 4'd10) ? 4'd6 : (vol_idx + 4'd1);
+    end
+
+    // SW3 position 5 adds one more step; clamp at the top of the table
+    wire [4:0] vol_sum = {1'b0, vol_idx} + {4'b0, c5_s2[0]};
+    assign vol_raw = (vol_sum > 5'd10) ? 4'd10 : vol_sum[3:0];
+
+    //------------------------------------------------------------------
+    // static controls latched at the audio sample rate
+    //------------------------------------------------------------------
+    wire [1:0] oct_raw = (c_s1[1:0] > 2'd2) ? 2'd2 : c_s1[1:0];
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            oct    <= 2'd0;
+            timbre <= 2'd0;
+            test_o <= 1'b0;
+        end else if (en) begin
+            oct    <= oct_raw;
+            timbre <= c_s1[3:2];
+            test_o <= t_s2;
+        end
+    end
+
+endmodule

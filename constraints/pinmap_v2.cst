@@ -1,0 +1,113 @@
+// ============================================================
+//  基于 FPGA 的实时多音色合成电子乐器引擎 —— 板级物理约束 V2
+//  板卡：Sipeed Tang Primer 20K（GW2A-LV18PG256C8/I7）+ Dock 3709/3714
+//
+//  V2 修正（依据 TTP229 数据手册 + 原理图根页逐脚复核）：
+//   1. 旧版 key_n[0]=B10 是 RECONFIG_N 配置脚 → 删除
+//   2. Dock 5 个硅胶键中 Key_0=T10 是 FPGA_RST、Key_4=B10 是 RECFG，
+//      只有 Key_1=T3 / Key_2=T2 / Key_3=D7 可当普通键
+//   3. J4/J5/J6 是 LCD 信号转接排针（Conn_02x06），不是 PMOD，不可复用
+//   4. TTP229 走 J14（MIC Array Conn, 2x6, 2.54mm），SCL=P8 / SDO=T8
+//   5. I2S 走 J14 余下的 MIC 脚，避让板载 PT8211（N15/P15/P16）
+//
+//  本文件当前只约束 top.v 已实现的端口；尚未接入的 LCD / 拨码 / LED
+//  以注释形式保留完整方案，接入时取消注释即可。
+// ============================================================
+
+// ------------------------- 时钟 -------------------------
+IO_LOC  "clk27" H11;
+IO_PORT "clk27" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// ------------------------- 复位 -------------------------
+// T10 被工具判为 SSPI 专用脚（ERROR PR2017），B10 是 RECONFIG_N，
+// 因此复位改用 Dock 的 Silicon Key_1 = T3（Bank4，*_1V5 → LVCMOS15）。
+// 按下拉低；上电时 PLL 未锁定也会把内部复位保持在复位态。
+IO_LOC  "rst_n" T3;
+IO_PORT "rst_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+
+// ---------------- TTP229 16 键触摸（J14 MIC 排针） ----------------
+// J14 = Conn_02x06_Odd_Even「MIC Array Conn」，带 +3V3 / GND，
+// 不用麦克风阵列时这 8 根全空：
+//   MIC_DAT0 = P8  (3/IOR42A, Bank3 3.3V)
+//   MIC_DAT1 = T8  (3/IOR42B, Bank3 3.3V)
+//   MIC_DAT2 = R8  (3/IOR29B, Bank3 3.3V)
+//   MIC_DAT3 = T7  (3/IOR29A, Bank3 3.3V)
+//   MIC_WS   = P6  (3/IOR53A, Bank3 3.3V)
+//   MIC_BCK  = T6  (3/IOR53B, Bank3 3.3V)
+//   MIC_LED_CLK = P9 (3/IOR38B)
+//   WS2812-DAT  = T9 (3/IOR38A)
+// TTP229 供电接 J14 的 +3V3，SCL/SDO 取前两根。
+IO_LOC  "tp_scl" P8;
+IO_PORT "tp_scl" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "tp_sdo" T8;
+IO_PORT "tp_sdo" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// --------------------- I2S 音频 → MAX98357 ---------------------
+// 同样走 J14 余下的 MIC 脚（3.3V Bank3），避让板载 PT8211 的 N15/P15/P16：
+//   MIC_DAT2 = R8 → i2s_bclk
+//   MIC_DAT3 = T7 → i2s_lrclk
+//   MIC_WS   = P6 → i2s_din
+// 注意 MAX98357 的 SD 脚不要悬空（默认左右声道平均），VIN 接 5V。
+IO_LOC  "i2s_bclk"  R8;
+IO_PORT "i2s_bclk"  IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "i2s_lrclk" T7;
+IO_PORT "i2s_lrclk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "i2s_din"   P6;
+IO_PORT "i2s_din"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// ============================================================
+//  以下为后续阶段（LCD 显示 / 拨码 / LED / 测试模式）预留，
+//  top.v 接入对应端口后取消注释即可。
+// ============================================================
+//
+// // ---------- 板载机械键（第二演奏维度 / 延迟测试通道） ----------
+// // Silicon Key_1..3，原理图标注 *_1V5 → 必须用 LVCMOS15
+// //   Key_1 = T3, Key_2 = T2, Key_3 = D7
+// // 注意：Key_0 = T10 已用作 rst_n，Key_4 = B10 = RECFG 不可用
+// // IO_LOC  "key_n[0]" T3;   IO_PORT "key_n[0]" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+// // IO_LOC  "key_n[1]" T2;   IO_PORT "key_n[1]" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+// // IO_LOC  "key_n[2]" D7;   IO_PORT "key_n[2]" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+//
+// // ---------- 5 位拨码开关 SW3（音色 / 八度 / 测试模式） ----------
+// // SW0..SW4 全部在 Bank4（*_1V5），用 LVCMOS15
+// // IO_LOC  "sw_n[0]" C7;    IO_PORT "sw_n[0]" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+// // IO_LOC  "sw_n[1]" E9;    IO_PORT "sw_n[1]" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+// // IO_LOC  "sw_n[2]" E8;    IO_PORT "sw_n[2]" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+// // IO_LOC  "sw_n[3]" T4;    IO_PORT "sw_n[3]" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+// // IO_LOC  "sw_n[4]" T5;    IO_PORT "sw_n[4]" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+//
+// // ---------- 板载橙色 LED（状态指示） ----------
+// // IO_LOC  "led_n[0]" C10;  IO_PORT "led_n[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+// // IO_LOC  "led_n[1]" A13;  IO_PORT "led_n[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+// // IO_LOC  "led_n[2]" C13;  IO_PORT "led_n[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+// // IO_LOC  "led_n[3]" N16;  IO_PORT "led_n[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+// // IO_LOC  "led_n[4]" L14;  IO_PORT "led_n[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+// // IO_LOC  "led_n[5]" L16;  IO_PORT "led_n[5]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+//
+// ---------- 40P RGB LCD（480x272, J7 FPC） ----------
+// Dock J7（FPC 0.5mm 40P），与官方 RGB_lcd/480x272_4.3inch_lcd 例程逐脚一致
+IO_LOC  "lcd_dclk" R9;   IO_PORT "lcd_dclk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_hs"   A15;  IO_PORT "lcd_hs"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_vs"   D14;  IO_PORT "lcd_vs"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_de"   E15;  IO_PORT "lcd_de"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "lcd_r[0]" L9;   IO_PORT "lcd_r[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[1]" N8;   IO_PORT "lcd_r[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[2]" N9;   IO_PORT "lcd_r[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[3]" N7;   IO_PORT "lcd_r[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[4]" N6;   IO_PORT "lcd_r[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "lcd_g[0]" D11;  IO_PORT "lcd_g[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[1]" A11;  IO_PORT "lcd_g[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[2]" B11;  IO_PORT "lcd_g[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[3]" P7;   IO_PORT "lcd_g[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[4]" R7;   IO_PORT "lcd_g[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[5]" D10;  IO_PORT "lcd_g[5]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "lcd_b[0]" B12;  IO_PORT "lcd_b[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[1]" C12;  IO_PORT "lcd_b[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[2]" B13;  IO_PORT "lcd_b[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[3]" A14;  IO_PORT "lcd_b[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[4]" B14;  IO_PORT "lcd_b[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+// // ---------- 板载 PT8211 功放使能（用外置模块时不需要） ----------
+// // IO_LOC  "pa_en" R16;     IO_PORT "pa_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

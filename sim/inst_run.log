@@ -1,0 +1,57 @@
+
+---- idle (no touch) ----
+PASS  DCLK half period in sys clocks (9 MHz) : 6
+PASS  HS period in pixels : 525
+PASS  VS period about 286 lines
+PASS  no key cell lit while idle : 0
+PASS  no envelope bar lit while idle : 0
+PASS  no envelope fill while idle
+PASS  envelope curve is a flat line while idle
+      idle wave trace pixels = 480 over 1 rows
+PASS  idle waveform is one flat line
+
+---- one key down (TP0 = C4) ----
+      key px = 1680 cells = 1 | wave px = 1155 rows = 123
+      env curve px = 231 fill px = 5097 | bar px = 180 cells = 1
+      mix_out min = -2045 max = 2038
+PASS  exactly one key cell lit : 1
+PASS  waveform trace spans many rows (a real sine)
+PASS  waveform trace has enough pixels
+PASS  envelope curve is drawn
+PASS  envelope area fill is drawn
+PASS  exactly one envelope bar lit : 1
+PASS  envelope bar has height
+
+---- scope trigger ----
+      trace row at column 0 : frame A = 95  frame B = 94
+PASS  steady tone is trigger-aligned (picture does not scroll)
+PASS  trigger point sits on the rising zero crossing near mid-screen
+
+---- two keys down (TP0 + TP1) ----
+      key px = 3360 cells = 2 | wave px = 985 rows = 110
+      bar px = 360 cells = 2
+PASS  two key cells lit at once : 2
+PASS  two envelope bars lit at once : 2
+PASS  waveform still drawn with two voices
+
+---- all released ----
+      key px = 0 cells = 0
+PASS  key cells go dark again : 0
+PASS  Key_2 toggles latch mode on
+PASS  tap on TP0 latches note 0
+
+---- latch mode: taps on TP0 then TP1, nothing held ----
+      latch = 03  key px = 3360 cells = 2  bars = 2
+PASS  two notes latched : 3
+PASS  two key cells lit with nothing held : 2
+PASS  two envelope bars lit with nothing held : 2
+PASS  both latched notes are audible (waveform alive)
+
+---- latch mode off ----
+      latch = 00  key px = 0 cells = 0
+PASS  Key_2 toggles latch mode off
+PASS  leaving latch mode clears it : 0
+PASS  key cells go dark : 0
+
+== tb_inst : ALL PASS ==
+sim/tb_inst.v:443: $finish called at 549774547890 (1ps)

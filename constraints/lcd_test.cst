@@ -1,0 +1,54 @@
+// ============================================================
+//  lcd_test.cst  --  bring-up build: LCD + touch pad only
+//
+//  Difference from pinmap_v2.cst: NO I2S pins are constrained at all,
+//  so i2s_bclk / i2s_lrclk / i2s_din do not exist in this top level and
+//  the MAX98357 module inputs simply stay floating (unconnected).
+//
+//  40P RGB LCD (J7, FPC 0.5mm) -- pin for pin from the Sipeed
+//  RGB_lcd/480x272_4.3inch_lcd example for this exact panel.
+//  Note: Dock only brings out R0-R4 / G0-G5 / B0-B4, i.e. RGB555 for
+//  red and blue and 6 bit for green.  lcd_r / lcd_b are 5 bit wide.
+// ============================================================
+
+// ------------------------- 时钟 -------------------------
+IO_LOC  "clk27" H11;
+IO_PORT "clk27" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// ------------------------- 复位 -------------------------
+// Silicon Key_1 = T3, Bank4 is 1.5 V -> must be LVCMOS15
+IO_LOC  "rst_n" T3;
+IO_PORT "rst_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+
+// ---------------- TTP229 16 键触摸（J14 MIC 排针） ----------------
+// J14 = Conn_02x06_Odd_Even "MIC Array Conn", carries +3V3 and GND,
+// so the module can be powered straight from the header.
+IO_LOC  "tp_scl" P8;
+IO_PORT "tp_scl" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "tp_sdo" T8;
+IO_PORT "tp_sdo" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// --------------------- 40P RGB LCD（480x272） ---------------------
+IO_LOC  "lcd_dclk" R9;   IO_PORT "lcd_dclk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_hs"   A15;  IO_PORT "lcd_hs"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_vs"   D14;  IO_PORT "lcd_vs"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_de"   E15;  IO_PORT "lcd_de"   IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "lcd_r[0]" L9;   IO_PORT "lcd_r[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[1]" N8;   IO_PORT "lcd_r[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[2]" N9;   IO_PORT "lcd_r[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[3]" N7;   IO_PORT "lcd_r[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_r[4]" N6;   IO_PORT "lcd_r[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "lcd_g[0]" D11;  IO_PORT "lcd_g[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[1]" A11;  IO_PORT "lcd_g[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[2]" B11;  IO_PORT "lcd_g[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[3]" P7;   IO_PORT "lcd_g[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[4]" R7;   IO_PORT "lcd_g[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_g[5]" D10;  IO_PORT "lcd_g[5]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "lcd_b[0]" B12;  IO_PORT "lcd_b[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[1]" C12;  IO_PORT "lcd_b[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[2]" B13;  IO_PORT "lcd_b[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[3]" A14;  IO_PORT "lcd_b[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "lcd_b[4]" B14;  IO_PORT "lcd_b[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

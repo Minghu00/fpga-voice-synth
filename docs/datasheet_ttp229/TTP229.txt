@@ -1,0 +1,694 @@
+2 0 1 0 / 0 2 / 0 4                                        P a g e  1  o f  4                                          V e r  :  1 . 3  
+TTP229 Appendix A-Package List-V1.3 
+Specification and application please refer to the series of TTP229_SPEC. 
+ 
+1. Option definition: 
+Option pin Option states Feature Remark 
+TP0 
+(OPDEN) 
+TP1 
+(SAHL) 
+1 1 
+ 
+ 
+8 output pins => CMOS output active-high 
+2-wires serial interface => CMOS output active-low 
+ 
+ 
+Default 
+1 0 8 output pins => CMOS output active-low 
+2-wires serial interface => CMOS output active-high 
+ 
+0 1 8 output pins => OD output active-low 
+2-wires serial interface => CMOS output active-low 
+ 
+ 
+ 
+TP0 
+(OPDEN) 
+ 
+ 
+TP1 
+(SAHL) 
+0 0 8 output pins => OC output active-high 
+2-wires serial interface => CMOS output active-high 
+ 
+1 8 input keys mode Default TP2 
+(KYSEL) 0 16 input keys mode  
+TP3 
+(SKMS1) 
+TP4 
+(SKMS0) 
+1 1 
+ 
+ 
+All Single-keys：one group(16keys) 
+ 
+ 
+Default 
+1 0 Two groups operate ： 
+group-1=>Single key；group-2=>Single key 
+ 
+0 1 Two groups operate ： 
+group-1=>Single key；group-2=>Multi key 
+ 
+ 
+ 
+TP3 
+(SKMS1) 
+ 
+ 
+TP4 
+(SKMS0) 
+0 0 All Multi-keys ：one group(16 keys)  
+1 8Hz sampling rate for wake-up in sleep mode Default TP5 
+(WPSCT) 0 64Hz sampling rate for wake-up in sleep mode  
+1 Wake-up sampling length=>about 4.0ms Default TP6 
+(SLWPTM) 0 Wake-up sampling length=>about 2.0ms  
+1 Maximum key-on time disable=>infinite Default TP7 
+(SKSRT) 0 Maximum key-on time enable=>about 80sec  
+1 Enable internal regulator Default  
+REGEN 0 Disable internal regulator  
+1 Serial output interface type selected =>2-wires serial output Default  
+SLSERT 0 Serial output interface type selected =>I 2C-bus interface  
+1 Sleep mode enable Default  
+ENSLP 0 Sleep mode disable  
+Note： 
+(1). Option states “1” mean internal pull-up (default). 
+(2). Option states “0” mean that TP0~TP7 pins are via high-value resistors connected to VSS, 
+others REGEN, SLSERT and ENSLP pins are connected to VSS directly. 
+(3). The 8 function options and TP0~TP7 pins share common pin. So they have pins for package. 
+ 
+2 0 1 0 / 0 2 / 0 4                                        P a g e  2  o f  4                                          V e r  :  1 . 3  
+2. P.S.: The mark of 〝V 〞 express that package item has the option feature pin. 
+      T h e  m a r k  o f  〝X 〞 express that package item ha s no the option feature pin. 
+      T h e  m a r k  o f  〝0 〞 express that the state of option pin is fixed to VSS in the package item. 
+      T h e  m a r k  o f  〝1 〞 express that the state of option pin is fixed to VDD in the package item. 
+TTP229 series list: 
+Option Features Package 
+Item 
+Package 
+Type 
+Top Mark 
+REGEN SLSERT ENSLP VREG
+First function Second function Comment 
+TTP229S1 SSOP-48 TTP229 Date code 
+Lot No. 
+V V V V   All pins 
+TTP229-AQG QFN-32 TTP229-A Date code 
+Lot No. 
+1 V 1 X 16 keys serial mode
+I2C+TT 
+8 keys direct mode A(2:0)= 
+(VVV) 
+TTP229-AQGN QFN-32 No-mark 1 V 1 X 16 keys serial modeI2C+TT 8 keys direct mode A(2:0)= (VVV) 
+TTP229-BSF SSOP-28 TTP229-B Date code 
+Lot No. 
+1 1 1 X 16 keys serial mode
+TT 
+8 keys direct mode  
+TTP229-BSFN SSOP-28 No-mark 1 1 1 X 16 keys serial modeTT 8 keys direct mode  
+TTP229-CSE SSOP-24 TTP229-C Date code 
+Lot No. 
+1 1 1 X 8 keys direct mode 8 keys serial mode 
+TT 
+ 
+TTP229-CSEN SSOP-24 No-mark 1 1 1 X 8 keys direct mode 8 keys serial mode TT  
+TTP229-DQE QFN-24 TTP229-D Date code 
+Lot No. 
+1 1 1 X 8 keys direct mode 8 keys serial mode 
+TT 
+ 
+TTP229-DQEN QFN-24 No-mark 1 1 1 X 8 keys direct mode 8 keys serial mode TT  
+TTP229-FSD SSOP-20 TTP229-F Date code 
+Lot No. 
+1 0 1 X 8 keys serial mode 
+I2C 
+ A(2:0)= 
+(VVV) 
+TTP229-FSDN SSOP-20 No-mark 1 0 1 X 8 keys serial mode I2C  A(2:0)= (VVV) 
+TTP229-GQD QFN-20 TTP229-G Date code 
+Lot No. 
+1 0 1 X 8 keys serial mode 
+I2C 
+ A(2:0)= 
+(VVV) 
+TTP229-GQDN QFN-20 No-mark 1 0 1 X 8 keys serial mode I2C  A(2:0)= (VVV) 
+TTP229-HSB SSOP-16 TTP229-H Date code 
+Lot No. 
+1 1 1 X 8 keys serial mode 
+TT 
+  
+TTP229-HSBN SSOP-16 No-mark 1 1 1 X 8 keys serial mode TT   
+TTP229-JQB QFN-16 TTP229-J Date code 
+Lot No. 
+1 1 1 X 8 keys serial mode 
+TT 
+  
+TTP229-JQBN QFN-16 No-mark 1 1 1 X 8 keys serial mode TT   
+TTP229-KSF SSOP-28 TTP229-K Date code 
+Lot No. 
+1 0 1 X 16 keys serial mode
+I2C 
+8 keys direct mode A(2:0)= 
+(01V) 
+TTP229-KSFN SSOP-28 No-mark 1 0 1 X 16 keys serial modeI2C 8 keys direct mode A(2:0)= (01V) 
+TTP229-LSF SSOP-28 TTP229-L Date code 
+Lot No. 
+1 0 1 X 16 keys serial mode
+I2C 
+8 keys direct mode A(2:0)=(111)
+Has SDO pin
+TTP229-LSFN SSOP-28 No-mark 1 0 1 X 16 keys serial modeI2C 8 keys direct mode A(2:0)=(111)Has SDO pin
+ 
+2 0 1 0 / 0 2 / 0 4                                        P a g e  3  o f  4                                          V e r  :  1 . 3  
+PACKAGE CONFIGURATION: 
+TTP229 PACKAGE 
+TTP229-LSFN SSOP-28
+TTP229-LSF   SSOP-28
+TTP229-KSFN SSOP-28
+TTP229-KSF   SSOP-28
+SDO
+SCL SLPSENB
+SENADJ2
+TP10
+TP11
+TP8
+TEST
+TP9
+TP7
+TP6
+TP4
+TP5
+SENADJ1
+VDD
+VSSSLPSENA
+SDA
+TP2
+TP3
+TP12
+TP13
+SENADJ3
+TP14
+TP15
+TP0
+TP1
+SENADJ0
+28
+27
+26
+25
+24
+23
+22
+21
+20
+19
+18
+17
+16
+1514
+13
+12
+11
+10
+9
+8
+7
+6
+5
+4
+3
+2
+1
+A0
+TP7
+TP6
+TP4
+TP5
+SENADJ1
+VDD
+VSSSLPSENA
+SDA
+TP2
+TP3
+SENADJ2
+TP10
+TP11SLPSENB
+SCL
+TP12
+TP13
+SENADJ3
+TP14
+TP15
+TP0
+TP1
+SENADJ0
+TP8
+TEST
+TP9
+28
+27
+26
+25
+24
+23
+22
+21
+20
+19
+18
+17
+16
+1514
+13
+12
+11
+10
+9
+8
+7
+6
+5
+4
+3
+2
+1
+TTP229-BSF   SSOP-28
+TTP229-BSFN SSOP-28
+SLPSENB
+SCL
+SDO
+TP12
+TP13
+SENADJ3
+TP14
+TP15
+TP0
+TP1
+SENADJ0
+TP2
+TP3
+SENADJ2
+TP10
+TP11
+TP8
+TP6
+VSS
+SLPSENA
+VDD
+TP4
+TP5
+SENADJ1
+TP7
+TEST
+TP9
+28
+27
+26
+25
+24
+23
+22
+21
+20
+19
+18
+17
+16
+1514
+13
+12
+11
+10
+9
+8
+7
+6
+5
+4
+3
+2
+1
+TTP229-AQG   QFN-32
+TTP229-CSE   SSOP-24 TTP229-DQE   QFN-24 TTP229-FSD   SSOP-20
+TTP229-GQD   QFN-20 TTP229-HSB   SSOP-16 TTP229-JQB   QFN-16
+TTP229-JQBN QFN-16TTP229-HSBN SSOP-16TTP229-GQDN QFN-20
+TTP229-FSDN SSOP-20
+SCL
+SDO
+TEST
+TP7
+SENADJ1
+TP6
+TP5
+TP4
+VDD
+VSS
+SLPSENA
+TP2
+SENADJ0
+TP1
+TP0
+TP3
+6
+7
+8
+91012 11
+13
+14
+15
+16 5
+4321SCLSDO
+TP0
+TP1
+SENADJ0
+TP2
+TP3
+VSS
+TP7
+TP6
+VDD
+TP4
+TP5
+SENADJ1
+TEST
+7
+6
+5
+4
+3
+2
+1
+89
+10
+11
+12
+13
+14
+16
+15
+SLPSENA
+VSS
+VDD
+TP6
+TP7
+SDA
+SCL
+TP0
+TP1
+SENADJ0
+TP2
+SLPSENA
+TP3
+TP4
+SENADJ1
+TP5
+A0
+TEST
+A2
+A1
+6
+7
+10
+9
+8
+1112131415
+16
+17
+18
+20
+19
+54321
+TTP229-DQEN QFN-24TTP229-CSEN SSOP-24
+SCL
+SDO
+TPQ4
+TPQ5
+TPQ7
+TPQ6
+SENADJ0
+SLPSENA
+TPQ0
+TPQ1
+TPQ2
+TPQ312
+11
+10
+9
+8
+7
+6
+5
+4
+3
+2
+1
+13
+14
+24
+23
+22
+21
+20
+19
+18
+17
+16
+15
+TP3
+TP2
+TP1
+TP0 TP6
+VSS
+VDD
+TP4
+TP5
+SENADJ1
+TP7
+TEST
+TPQ0
+TPQ1
+TPQ2
+TPQ3
+TPQ4
+TPQ5
+TPQ6
+TPQ7
+TP5
+SENADJ1
+TP6
+TP7
+TEST
+19
+20
+21
+22
+23
+24
+SCL
+SDO
+131415161718
+TP0
+SENADJ0
+TP1
+12
+11
+10
+9
+8
+7
+654321
+TP3
+SLPSENA
+VSS
+VDD
+TP4
+TP2
+SCL
+SDA
+TP0
+TP1
+SENADJ0
+TP2
+TP3
+A0
+A1
+A2
+TP7
+TEST
+VSS
+SLPSENA
+10
+9
+8
+7
+6
+5
+4
+3
+2
+1
+11
+12
+13
+14
+20
+19
+18
+17
+16
+15
+TP6
+VDD
+TP4
+TP5
+SENADJ1
+TTP229-AQGN QFN-32
+TTP229S1 SSOP-48
+SENADJ1
+TP6
+TP7
+SLSERT
+A0
+A1
+A2
+TEST
+TP3
+SLPSENA
+VSS
+VDD
+TP4
+TP5
+SENADJ0
+TP2
+TP14
+TP15
+SDA
+TP12
+TP13
+SENADJ3
+TP1
+TP0
+TP8
+TP9
+SENADJ2
+TP10
+TP11
+SLPSENB
+SCL
+SDO
+16
+15
+14
+13
+12
+11
+10
+9
+1718192021222324
+25
+26
+27
+28
+29
+30
+31
+32
+87654321
+REGEN
+VSS
+ENSLP
+VREG
+VDD
+TP4
+TP5
+SENADJ1
+TP6
+TP7
+SLSERT
+A0
+A1
+A2
+TEST
+TP8
+TP9
+SENADJ2
+TP10TP11
+SLPSENB
+SCL
+SDO
+SDA
+TP12
+TP13
+SENADJ3
+TP14
+TP15
+TP0
+TP1
+SENADJ0
+TP2
+TP3
+SLPSENA
+48
+47
+46
+45
+44
+43
+42
+41
+40
+39
+38
+37
+36
+35
+34
+33
+32
+31
+30
+29
+28
+27
+26
+2524
+23
+22
+21
+20
+19
+18
+17
+16
+15
+14
+13
+12
+11
+10
+9
+8
+7
+6
+5
+4
+3
+2
+1
+ 
+2 0 1 0 / 0 2 / 0 4                                        P a g e  4  o f  4                                          V e r  :  1 . 3  
+REVISE HISTORY 
+1. 2009/11/13 =>V_1.0 
+ -Original version ： 
+Including TTP229S1、TTP229-AQG、TTP229-AQGN、TTP229-BSF、TTP229-BSFN、TTP229-CSE、
+TTP229-CSEN、TTP229-DQE、TTP229-DQEN、TTP229-FSD、TTP229-FSDN、TTP229-GQD、
+TTP229-GQDN、TTP229-HSB、TTP229-HSBN、TTP229-JQB、TTP229-JQBN etc.。 
+2. 2009/12/14 =>V_1.1 
+ -Add the TTP229-KSF and TTP229-KSFN package 。 
+3. 2009/12/21 =>V_1.2 
+ -Changing the Maximum Key-on Time value at the page-1 。 It changes from 60 to 80sec 。 
+4. 2010/02/04 =>V_1.3 
+ -Add the TTP229-LSF and TTP229-LSFN package 。 
+ 
