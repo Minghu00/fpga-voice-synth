@@ -182,6 +182,8 @@ module tb_inst;
     //  spectrum page (dmode == 1): bar body and bar head colours
     wire spec_body  = (lcd_r==5'd2)  && (lcd_g==6'd30) && (lcd_b==5'd20);
     wire spec_head  = (lcd_r==5'd31) && (lcd_g==6'd52) && (lcd_b==5'd10);
+    //  Lissajous page (dmode == 2): the filled X-Y figure
+    wire liss_band  = (lcd_r==5'd22) && (lcd_g==6'd26) && (lcd_b==5'd31);
 
     //----------------------------------------------------------------------
     // pixel / frame statistics, plus HS and VS period measurement
@@ -191,6 +193,8 @@ module tb_inst;
 
     integer s_key = 0, s_wave = 0, s_envl = 0, s_envf = 0, s_bar = 0;
     integer s_spec = 0, s_spec_head = 0;
+    integer s_liss = 0, s_liss_cols = 0;
+    reg [511:0] s_lissrow;   // which rows the figure hits
     integer s_nwrows = 0, s_nkcells = 0, s_nbcells = 0;
     integer s_wrow0 = -1;   // row hit by the waveform at column 0 (trigger check)
     reg [135:0] s_wrows;          // waveform rows 28..163
@@ -199,6 +203,7 @@ module tb_inst;
 
     integer f_key = 0, f_wave = 0, f_envl = 0, f_envf = 0, f_bar = 0;
     integer f_spec = 0, f_spec_head = 0;
+    integer f_liss = 0, f_liss_cols = 0;
     reg [15:0] f_specbars;
     integer f_nwrows = 0, f_nkcells = 0, f_nbcells = 0;
     integer f_wrow0 = -1;
@@ -253,6 +258,7 @@ integer bi;
             s_nwrows = 0; s_nkcells = 0; s_nbcells = 0; s_wrow0 = -1;
             s_wrows = 0; s_kcells = 0; s_bcells = 0;
             s_spec = 0; s_spec_head = 0; s_specbars = 0;
+        s_liss = 0; s_liss_cols = 0; s_lissrow = 0;
             s_dbg_wave = 0; s_dbg_key = 0; s_dbg_env = 0; s_dbg_fill = 0; s_dbg_bar = 0;
             f_dbg_wave = 0; f_dbg_key = 0; f_dbg_env = 0; f_dbg_fill = 0; f_dbg_bar = 0;
             f_key = 0; f_wave = 0; f_envl = 0; f_envf = 0; f_bar = 0;
@@ -347,7 +353,13 @@ integer bi;
                                 end
                             end
                         end else if (row < 164) begin
-                            if (spec_body || spec_head) begin
+                            if (liss_band) begin
+                                s_liss = s_liss + 1;
+                                if (!s_lissrow[col]) begin
+                                    s_lissrow[col] = 1'b1;
+                                    s_liss_cols = s_liss_cols + 1;
+                                end
+                            end else if (spec_body || spec_head) begin
                                 s_spec = s_spec + 1;
                                 if (spec_head) begin
                                     s_spec_head = s_spec_head + 1;
@@ -397,6 +409,7 @@ integer bi;
                     f_nkcells = s_nkcells;
                     f_nbcells = s_nbcells;
                     f_spec = s_spec;    f_spec_head = s_spec_head;
+        f_liss = s_liss;    f_liss_cols = s_liss_cols;
                     f_specbars = s_specbars;
                     f_dbg_wave = s_dbg_wave; f_dbg_key = s_dbg_key;
                     f_dbg_env = s_dbg_env;   f_dbg_fill = s_dbg_fill;
@@ -407,6 +420,7 @@ integer bi;
                     s_nwrows = 0; s_nkcells = 0; s_nbcells = 0; s_wrow0 = -1;
                     s_wrows = 0; s_kcells = 0; s_bcells = 0;
                     s_spec = 0; s_spec_head = 0; s_specbars = 0;
+        s_liss = 0; s_liss_cols = 0; s_lissrow = 0;
                     frame_no = frame_no + 1;
                 end
                 de_q = lcd_de;
@@ -837,10 +851,10 @@ integer bi;
         // besides stepping the FX bank, so the assertion below documents that
         // coexistence rather than pretending it does not happen.
         //------------------------------------------------------------------
-        chk(dut.dmode == 1'b0, "display page starts on the waveform");
+        chk(dut.dmode == 2'd0, "display page starts on the waveform");
         key_btn = 1'b0;
         repeat (130) @(posedge clk);          // well past 2 x BTHR
-        chk(dut.dmode == 1'b1,
+        chk(dut.dmode == 2'd1,
             "a very long Key_2 press switches to the spectrum page");
         chk_num(dut.fx_mode, 3'd1,
                 "the same very long press also stepped the FX bank once");
@@ -866,11 +880,34 @@ integer bi;
         base = frame_no;
         wait_frames(base + 2);
 
-        // and the next very long press goes back to the waveform
+        //------------------------------------------------------------------
+        // the second very long press moves on to the Lissajous page
+        //------------------------------------------------------------------
         key_btn = 1'b0;
         repeat (130) @(posedge clk);
-        chk(dut.dmode == 1'b0,
-            "a second very long press returns to the waveform page");
+        chk(dut.dmode == 2'd2,
+            "a second very long press switches to the Lissajous page");
+        key_btn = 1'b1;
+        repeat (60) @(posedge clk);
+
+        // the figure is rebuilt once per frame from 512 stereo samples, so one
+        // full frame of rendering is enough to have something to look at
+        keys = 16'h0001;
+        base = frame_no;
+        wait_frames(base + 3);
+        $display("      lissajous px = %0d  columns = %0d", f_liss, f_liss_cols);
+        chk((f_liss > 500), "Lissajous page draws the X-Y figure while a note sounds");
+        chk((f_liss_cols > 20),
+            "the figure spreads over many columns, not a single vertical line");
+        keys = 16'h0000;
+        base = frame_no;
+        wait_frames(base + 2);
+
+        // and the third very long press wraps back to the waveform
+        key_btn = 1'b0;
+        repeat (130) @(posedge clk);
+        chk(dut.dmode == 2'd0,
+            "a third very long press returns to the waveform page");
         key_btn = 1'b1;
         repeat (60) @(posedge clk);
 

@@ -259,10 +259,8 @@ module top_inst #(
     reg        btn_long;
     reg        btn_vlong;
     reg [2:0]  fx_mode;
-    //  Display page.  Only two pages exist so far -- 0 waveform, 1 spectrum --
-    //  so a single bit is enough; the lissajous page will widen this to two
-    //  bits when the stereo split lands.
-    reg        dmode;
+    //  Display page: 0 = waveform, 1 = spectrum, 2 = Lissajous (X-Y).
+    reg  [1:0] dmode;
     wire       btn_down      = ~btn_sync[1];
     wire       btn_down_prev = ~btn_sync[2];
 
@@ -296,7 +294,7 @@ module top_inst #(
                     end
                 end else if (!btn_vlong) begin
                     btn_vlong <= 1'b1;
-                    dmode     <= ~dmode;
+                    dmode     <= (dmode == 2'd2) ? 2'd0 : (dmode + 2'd1);
                 end
             end
 
@@ -526,6 +524,8 @@ module top_inst #(
     // full scale without clipping (8 x 32767 >> 3 = 32767)
     //------------------------------------------------------------------
     wire [15:0] mix_out;
+wire [15:0] mix_l;
+wire [15:0] mix_r;
     wire        mix_ok;              // one clk pulse per frame, mix_out valid
 
     mixer16 #(
@@ -539,6 +539,8 @@ module top_inst #(
         .raw_flat (raw_flat),
         .env_flat (env_flat),
         .out      (mix_out),
+        .out_l    (mix_l),
+        .out_r    (mix_r),
         .out_ok   (mix_ok)
     );
 
@@ -797,6 +799,48 @@ module top_inst #(
     end
 
     //------------------------------------------------------------------
+    // Lissajous pre-renderer
+    //
+    // Needs the LEFT and RIGHT sample of the same instant, and it reads all
+    // 512 of them in one burst during vertical blanking -- which the display
+    // buffer cannot serve because it is being scanned at the same time.  So a
+    // second stereo history buffer is written in parallel (same data, same
+    // address) and owned by the renderer.
+    //
+    // vblank comes straight off the pixel row counter: rows V_ACT..V_TOT-1 are
+    // blanking, 14 lines x 525 px x DIV clk = 88200 clocks, plenty for the
+    // 3584-clock update.
+    //------------------------------------------------------------------
+    wire [9:0]  tmg_x_w;
+    wire        vblank_w;
+    wire [8:0]  liss_haddr;
+    wire [15:0] liss_hl, liss_hr;
+    wire [15:0] liss_span;
+    wire [15:0] liss_hr_unused;
+
+    wave_buf u_wb_liss (
+        .clk       (clk_sys),
+        .wr_en     (scope_tick),
+        .wr_addr   (wptr_w),
+        .wr_data_l (mix_l),
+        .wr_data_r (mix_r),
+        .rd_addr   (liss_haddr),
+        .rd_data_l (liss_hl),
+        .rd_data_r (liss_hr)
+    );
+
+    liss_render u_liss (
+        .clk       (clk_sys),
+        .rst_n     (srst_n),
+        .vblank    (vblank_w),
+        .hist_addr (liss_haddr),
+        .hist_l    (liss_hl),
+        .hist_r    (liss_hr),
+        .disp_addr (tmg_x_w[8:0]),
+        .disp_span (liss_span)
+    );
+
+    //------------------------------------------------------------------
     // panel
     //------------------------------------------------------------------
     lcd_scope #(
@@ -823,6 +867,9 @@ module top_inst #(
         .wave_mode(wave_mode),
         .fx       (fx_mode),
         .dmode    (dmode),
+        .liss_span(liss_span),
+        .tmg_x    (tmg_x_w),
+        .tmg_vblank(vblank_w),
         .spec_flat(spec_flat),
         .vib_abs  (vib_abs),
         .lcd_dclk (lcd_dclk),

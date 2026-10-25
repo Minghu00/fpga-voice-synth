@@ -72,7 +72,8 @@ module lcd_scope #(
     input  wire                 test_en,        // 1 = on-site self test is active
     input  wire                 wave_mode,      // 1 = 4-wavetable additive mode
     input  wire [2:0]           fx,             // expression bank: b0 vib, b1 echo, b2 glide
-    input  wire                 dmode,          // 0 = waveform, 1 = spectrum
+    input  wire [1:0]           dmode,          // 0 = waveform, 1 = spectrum, 2 = Lissajous
+    input  wire [15:0]          liss_span,      // per-column {ymax[7:0], ymin[7:0]} of the X-Y figure
     input  wire [63:0]          spec_flat,      // 16 spectrum levels, 4 bits each
     input  wire [5:0]           vib_abs,        // |vibrato detune|, 0 when off
                                                 //   -- also keeps the LFO out of the
@@ -80,6 +81,15 @@ module lcd_scope #(
                                                 //   output made Gowin delete u_lfo
 
     // panel
+    //
+    //  Timing taps for the Lissajous renderer.  The row/column counters live in
+    //  here (lcd_timing is instantiated below), so the renderer has to be handed
+    //  the column index and the blanking flag from inside.  The path is
+    //  x -> liss_render address -> BSRAM -> registered data -> liss_span, so
+    //  there is no combinational loop back into this module.
+    //
+    output wire [9:0]   tmg_x,          // current display column
+    output wire         tmg_vblank,     // high during vertical blanking
     output wire         lcd_dclk,
     output reg          lcd_hs,
     output reg          lcd_vs,
@@ -119,6 +129,9 @@ module lcd_scope #(
         .x       (x),
         .y       (y)
     );
+
+    assign tmg_x      = x;
+    assign tmg_vblank = (y >= V_ACT);
 
     //------------------------------------------------------------------
     // column -> 60 px key cell index, x/60 by reciprocal.
@@ -176,22 +189,32 @@ module lcd_scope #(
     // DIV (the testbench uses 3) both samples then come from the same place.
     reg [8:0] cw_q, ce_q;
 
+    // The waveform buffer is stereo in the top level (the Lissajous page needs
+    // L and R of the same instant) but the scope itself only ever plots the
+    // mono mix, so the right channel is left open here.  The envelope buffer is
+    // genuinely mono -- its upper plane is tied off.
+    wire [15:0] rd_w_r_unused;
+
     wave_buf u_buf_w (
-        .clk     (clk),
-        .wr_en   (wr_en_w),
-        .wr_addr (wr_addr_w),
-        .wr_data (wr_data_w),
-        .rd_addr (ra_w),
-        .rd_data (rd_w)
+        .clk       (clk),
+        .wr_en     (wr_en_w),
+        .wr_addr   (wr_addr_w),
+        .wr_data_l (wr_data_w),
+        .wr_data_r (wr_data_w),
+        .rd_addr   (ra_w),
+        .rd_data_l (rd_w),
+        .rd_data_r (rd_w_r_unused)
     );
 
     wave_buf u_buf_e (
-        .clk     (clk),
-        .wr_en   (wr_en_e),
-        .wr_addr (wr_addr_e),
-        .wr_data (wr_data_e),
-        .rd_addr (ra_e),
-        .rd_data (rd_e)
+        .clk       (clk),
+        .wr_en     (wr_en_e),
+        .wr_addr   (wr_addr_e),
+        .wr_data_l (wr_data_e),
+        .wr_data_r (16'd0),
+        .rd_addr   (ra_e),
+        .rd_data_l (rd_e),
+        .rd_data_r ()
     );
 
     //------------------------------------------------------------------
@@ -206,7 +229,9 @@ module lcd_scope #(
     reg               tst_q;            // test_en, pipelined with the geometry
     reg               wm_q;             // wave_mode, same pipeline stage
     reg        [2:0]  fx_q;             // fx_mode, same pipeline stage
-    reg               dm_q;             // display mode, same pipeline stage
+    reg  [1:0]        dm_q;             // display page, same pipeline stage
+    reg  [15:0]       lyi_q;            // Lissajous span, pipelined with the geometry
+    reg               lok_q;            // 1 = this column carries samples
     reg        [5:0]  vab_q;            // |vibrato| in the same pipeline stage
     reg        [3:0]  slvl_q;           // spectrum level of this 30 px column
     reg        [9:0]  stop_q;           // top row of that bar
@@ -240,6 +265,10 @@ module lcd_scope #(
     // pipeline stage 3 (ph 8): hit flags
     //------------------------------------------------------------------
     reg w_hit, e_hit, e_fill, bar_hit, bar_cap;
+    reg  [4:0]  sbk_q;      // status-strip block index, registered
+    reg         ioct_q, itim_q, ivol_q, itst_q, iwav_q, ifx_q, idm_q;
+
+    reg l_hit;                        // Lissajous page hit (see stage 3)
 
     //------------------------------------------------------------------
     // Pipeline control.
@@ -275,7 +304,7 @@ module lcd_scope #(
             lev_q  <= 4'd0;    key_q <= 1'b0;
             mode_q <= 1'b0;
             tst_q  <= 1'b0;
-                wm_q   <= 1'b0;
+            wm_q   <= 1'b0;
             fx_q   <= 3'd0;
             x_q    <= 10'd0;   y_q   <= 10'd0;
             oct_q  <= 2'd0;    tim_q <= 2'd0;
@@ -283,6 +312,13 @@ module lcd_scope #(
             elo_q  <= 16'sd0;  ehi_q <= 16'sd0;
             w_hit  <= 1'b0;    e_hit <= 1'b0;
             e_fill <= 1'b0;    bar_hit <= 1'b0; bar_cap <= 1'b0;
+            l_hit  <= 1'b0;
+            lyi_q  <= 16'd0;   lok_q <= 1'b0;
+            sbk_q  <= 5'd0;
+            ioct_q <= 1'b0;    itim_q <= 1'b0;
+            ivol_q <= 1'b0;    itst_q <= 1'b0;
+            iwav_q <= 1'b0;    ifx_q  <= 1'b0;
+            idm_q  <= 1'b0;
         end else if (pipe_en) begin
             //----------------------------------------------------------
             // sample fetch
@@ -376,6 +412,8 @@ module lcd_scope #(
                 wm_q   <= wave_mode;
             fx_q   <= fx;
             dm_q   <= dmode;
+            lyi_q  <= liss_span;
+            lok_q  <= (liss_span[7:0] <= liss_span[15:8]);
         vab_q  <= vib_abs;
             oct_q  <= oct;
             tim_q  <= timbre;
@@ -404,6 +442,13 @@ module lcd_scope #(
             // row as area fill even though nothing is sounding
             e_fill  <= (y_q >= ENV_Y0) && (y_q < ENV_Y1) &&
                        (y_q > ye_q);
+            // Lissajous page: the column index comes from the LEFT sample, so the
+            // span table (built in vblank by liss_render) is indexed by x_q and
+            // simply compared against y_q here.
+            l_hit   <= (dm_q == 2'd2) && lok_q &&
+                       (y_q >= 10'd28) && (y_q < 10'd164) &&
+                       ({6'b0, y_q} >= ({6'b0, lyi_q[7:0]}  + 16'd28)) &&
+                       ({6'b0, y_q} <= ({6'b0, lyi_q[15:8]} + 16'd28));
             bar_hit <= (y_q >= BARS_Y0) && ({6'b0, y_q} >= btop_q);
             bar_cap <= (y_q >= BARS_Y0) && ({6'b0, y_q} >= btop_q) &&
                        ({6'b0, y_q} <= btop_q + 16'sd2);
@@ -415,6 +460,18 @@ module lcd_scope #(
             y_q <= y;
             slvl_q <= slvl_x;
             stop_q <= stop_x;
+            //  Status-strip decode, registered here so stage 4 only has to AND
+            //  flip-flop outputs together.  Left combinational it was the
+            //  worst setup path in the design (x_q -> 22-bit multiply ->
+            //  compares -> nibble select, 0.013 ns of slack).
+            sbk_q  <= sblk_x;
+            ioct_q <= (x <  10'd48);
+            itim_q <= (x >= 10'd48)  && (x < 10'd96);
+            ivol_q <= (x >= 10'd96)  && (x < 10'd156);
+            itst_q <= (x >= 10'd168) && (x < 10'd192);
+            iwav_q <= (x >= 10'd192) && (x < 10'd216);
+            ifx_q  <= (x >= 10'd216) && (x < 10'd312);
+            idm_q  <= (x >= 10'd320) && (x < 10'd368);
         end
     end
 
@@ -440,34 +497,29 @@ module lcd_scope #(
     //  block index wrapped back to 0 and the octave/timbre ladder lit up a
     //  second time on the right half of the strip.  Explicit windows remove
     //  both the wrap and the accidental 216 px wide "TEST" band.
-    wire [21:0] m_stat = {12'b0, x_q} * 22'd2731;
-    wire [4:0]  sblk   = m_stat[19:15];
-    wire        in_oct = (x_q <  10'd48);
-    wire        in_tim = (x_q >= 10'd48)  && (x_q < 10'd96);
-    wire        in_vol = (x_q >= 10'd96)  && (x_q < 10'd156);
-    wire        in_tst = (x_q >= 10'd168) && (x_q < 10'd192);
-    wire        in_wav = (x_q >= 10'd192) && (x_q < 10'd216);
-    wire        in_fx  = (x_q >= 10'd216) && (x_q < 10'd312);   // 8 blocks
-    wire        in_dm  = (x_q >= 10'd320) && (x_q < 10'd368);   // 4 blocks
+    //  Computed from x (the timing generator's own register) and registered
+    //  into sbk_q by stage 3; stage 4 consumes only flip-flop outputs.
+    wire [21:0] m_stat = {12'b0, x} * 22'd2731;
+    wire [4:0]  sblk_x = m_stat[19:15];
 
-    wire        oct_on = in_oct && (sblk <= {3'b0, oct_q});
-    wire        tim_on = in_tim && ((sblk - 5'd4) <= {3'b0, tim_q});
+    wire        oct_on = ioct_q && (sbk_q <= {3'b0, oct_q});
+    wire        tim_on = itim_q && ((sbk_q - 5'd4) <= {3'b0, tim_q});
 
     // volume ladder: 5 blocks, x 96..155, one per gain step 6..10
     wire [3:0]  vol_lvl = (vol_q4 < 4'd6) ? 4'd0 : (vol_q4 - 4'd6);
-    wire        vol_on  = in_vol && ((sblk - 5'd8) <= {1'b0, vol_lvl});
+    wire        vol_on  = ivol_q && ((sbk_q - 5'd8) <= {1'b0, vol_lvl});
 
-    wire        tst_on  = tst_q && in_tst;   // TEST flag: solid red
-    wire        wav_on  = wm_q  && in_wav;   // WAVE flag: solid orange
+    wire        tst_on  = tst_q && itst_q;   // TEST flag: solid red
+    wire        wav_on  = wm_q  && iwav_q;   // WAVE flag: solid orange
 
     // expression/effect bank: 8 blocks, x 216..311, one per fx_mode value.
     // Block 0 is always lit while fx_mode != 0 is NOT required -- the ladder
     // shows fx_mode+1 blocks so that "off" still draws a single dim block and
     // the player can tell the strip is alive.
-    wire        fx_on   = in_fx && ((sblk - 5'd18) <= {2'b0, fx_q});
+    wire        fx_on   = ifx_q && ((sbk_q - 5'd18) <= {2'b0, fx_q});
     //  display page ladder: 4 blocks at x 320..367, (dmode+1) of them lit, so
     //  page 0 (waveform) always shows one dim block and the strip looks alive.
-    wire        dm_on   = in_dm && ((sblk - 5'd26) <= {4'b0, dm_q});
+    wire        dm_on   = idm_q && ((sbk_q - 5'd26) <= {3'b0, dm_q});
 
     //------------------------------------------------------------------
     // spectrum bars (dmode == 1) -- the wave box becomes 16 bars, 30 px each
@@ -491,7 +543,7 @@ module lcd_scope #(
 
     wire [3:0]  slvl  = slvl_q;
     wire [9:0]  stop  = stop_q;
-    wire        sp_on = (dm_q == 1'b1) && (y_q >= 10'd28) && (y_q < 10'd164) &&
+    wire        sp_on = (dm_q == 2'd1) && (y_q >= 10'd28) && (y_q < 10'd164) &&
                         (y_q >= stop);
     wire        sp_cap = sp_on && (y_q < stop + 10'd2);
 
@@ -510,7 +562,7 @@ module lcd_scope #(
                     nr <= 5'd3;   ng <= 6'd6;   nb <= 5'd12;  // idle
                 end
             end else if (y_q < WAVE_Y1) begin
-                if (dm_q == 1'b1) begin
+                if (dm_q == 2'd1) begin
                     // spectrum page: 16 live bars instead of the trace
                     if (sp_on) begin
                         if (sp_cap) begin
@@ -520,6 +572,14 @@ module lcd_scope #(
                         end
                     end else if (y_q == 10'd163) begin
                         nr <= 5'd2;   ng <= 6'd16;  nb <= 5'd26;      // base line
+                    end
+                end else if (dm_q == 2'd2) begin
+                    // Lissajous page: filled X-Y figure, warm violet so it is
+                    // distinguishable from the spectrum bars and the waveform
+                    if (l_hit) begin
+                        nr <= 5'd22;  ng <= 6'd26;  nb <= 5'd31;
+                    end else if ((y_q == 10'd96) || (x_q == 10'd240)) begin
+                        nr <= 5'd2;   ng <= 6'd14;  nb <= 5'd22;  // centre cross
                     end
                 end else if (w_hit) begin
                     nr <= 5'd5;   ng <= 6'd58;  nb <= 5'd14;  // trace: green

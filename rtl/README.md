@@ -36,7 +36,7 @@
 | `wav_bank_4096.mem` | — | 4096 行 × 16 位有符号：行 0–1023 正弦、1024–2047 三角、2048–3071 锯齿、3072–4095 方波。三张新表**带宽限到 8 次谐波**。行 0–1023 与旧 `sine_1024.mem` **逐行一致**。**路径写死在 `wavetable_bank.v` 的 `$readmemh`，移动文件只改那一行** |
 | `osc_bank.v` | `osc_bank` | 核心。`VOICES` 个声部 × `VOICES×NCOMP` 个独立相位累加器，时分复用一套 ROM + 乘法器；输出 `raw_flat`（每声部 16 位有符号，叠加了各分量）。相位存 BSRAM。`wave_mode=1` 时 `tab_nx = cidx`（分量 c 读表 c）+ 幅度四等分。**帧尾预计算段**（`fc` 1024..1279）里同时跑 `pinc→inc_org` 的滑音逼近、`tgt_inc<<oct` 的八度移位、以及颤音乘性调制；这些都在 8 个声部/帧的低占空比窗口内完成，不进音频主路径 |
 | `adsr.v` | `adsr` | 5 态包络（IDLE/ATT/DEC/SUS/REL）。`ATT_STEP/DEC_STEP/REL_STEP/SUSTAIN` 全是参数，换音色只改参数 |
-| `mixer16.v` | `mixer16` | `VOICES` 路求和 + ±32767 饱和。`MIX_SHIFT` 是统一右移（防溢出） |
+| `mixer16.v` | `mixer16` | `VOICES` 路求和 + ±32767 饱和。`MIX_SHIFT` 是统一右移（防溢出）。**轻微声像**：奇数号声部偏右、偶数号偏左（±12.5%），输出 `out_l`/`out_r`；`L+R = 2×原混音`，单声道兼容 |
 | `audio_out.v` | `audio_out` | 音量（13 位 Q8，128..4096 = 0.5×..16×，默认索引 6 = 4.0×）、静音、测试音（94 Hz −12 dBFS 方波，绕过合成器） |
 | `i2s_tx.v` | `i2s_tx` | 标准 I2S 串行器。16 位/槽，`BCLK_HALF=35` → BCLK 1.5429 MHz；帧长**精确** 2240 clk，与音频帧锁相。`load_tick` 捕获到 `shadow_l/shadow_r`，帧边界再装载 |
 | `test_mode.v` | `test_mode` | 现场测试模式。上电 1 ms 窗口内按住 Key_3 即锁存 `test_en`（粘性，断电退出）；锁存后强制 `gate=全 1`、`note_flat=NOTE_SET`（8 个隔 3 半音的音）、`timbre=0`（单分量纯正弦）、`oct=0`、`vol=2`（1.0×）。**选通结果必须在模块内打一拍再输出**，否则那级 mux 会串进 `note→inc_lut→<<oct` 最紧路径，Fmax 从 119.6 掉到 108.85 MHz |
@@ -47,8 +47,9 @@
 | 文件 | 模块 | 说明 |
 |---|---|---|
 | `lcd_timing.v` | `lcd_timing` | 同步产生器。`DIV=12` → 9 MHz 像素时钟；H 480+2+41+2=525、V 272+2+10+2=286 → 59.94 Hz。HS/VS 低有效，DE 高有效 |
-| `wave_buf.v` | `wave_buf` | 512×16 双口 BSRAM，存混音历史给示波器用（同地址读写返回旧值） |
+| `wave_buf.v` | `wave_buf` | 512×**32** 双口 BSRAM（`{R,L}`），存立体声混音历史给示波器 / 李萨如用（同地址读写返回旧值） |
 | `spectrum16.v` | `spectrum16` | **16 bin 实时频谱**。512 点三角窗 DFT，`94.174 Hz/bin`（k=1..16，跳过 DC），覆盖 94 Hz..1.507 kHz。2 块 sin/cos BSRAM + 2 个乘法器时分复用，一个采样 16 槽 × 3 拍 = 48 clk（预算 2240）。输出 4 bit × 16 电平；AGC 以本块峰值 bin 为 0 dB、每档 3 dB，低于峰值 45 dB 读 0。`$readmemh` 读 `rtl/display/spectrum_sin.mem`。三个必留坑见文件头 |
+| `liss_render.v` | `liss_render` | **李萨如预渲染器**。行消隐内把 512 个立体声点压成 512×16 的按列纵向拉幅表（`{ymax,ymin}`，空列 `{0,255}`）；`xb = clamp(240 + L>>>6, 0, 479)`、`y = clamp(68 + R>>>6, 0, 135)`。7 状态 FSM，3584 clk（预算 88200） |
 | `lcd_scope.v` | `lcd_scope` | 全部画面。纵向分区（`localparam WAVE_Y0/Y1=28/164`、`ENV_Y0/Y1=164/232`、`STAT_Y0/Y1=232/240`、`BARS_Y0=240`）：`y0..27` 8 个触摸格、`y28..163` 波形示波器（**过零触发**，窗口起点每帧只锁一次）、`y164..231` 实心包络柱、`y232..239` 状态条、`y240..271` 8 根逐声部包络柱（每根 60 px）。状态条横分 16 块（`sblk=(x×2731)>>15`，每块 30 px）：`sblk 0..3` 八度梯、`4..7` 音色梯、`8..12` 音量梯、`14..15` **TEST 红块**；另外 `y<18 && x>463` 是锁存模式紫标记 |
 
 ### `legacy/` —— 历史版本（仍可综合，用于对照）
