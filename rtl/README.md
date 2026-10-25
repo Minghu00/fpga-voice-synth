@@ -32,9 +32,9 @@
 |---|---|---|
 | `frame_gen.v` | `frame_gen` | 帧内相位发生器：`fc` 0..2239，以及 `sample_tick` / `osc_ph` / `env_ph` / `mix_ph` 四个时隙标志 |
 | `inc_lut.v` | `inc_lut` | 25 音名（C4…C6，索引 0–24）→ 32 位相位增量（`inc = f × 2^32 / fs`），纯组合查找。溢出预算：`C6 ×4(谐波) = 0x1639E578 < 2^32`；再乘八度 ×4 就溢出，所以 `oct` 只允许 0..2 |
-| `sine_rom.v` | `sine_rom` | 1024×16 位**二进制补码有符号**正弦表，`$readmemh` 读 `rtl/audio/sine_1024.mem` |
-| `sine_1024.mem` | — | 正弦数据。**路径写死在 `sine_rom.v:29`，移动文件只改那一行** |
-| `osc_bank.v` | `osc_bank` | 核心。`VOICES` 个声部 × `VOICES×NCOMP` 个独立相位累加器，时分复用一套 ROM + 乘法器；输出 `raw_flat`（每声部 16 位有符号，叠加了各分量）。相位存 BSRAM |
+| `wavetable_bank.v` | `wavetable_bank` | **4 张波表**（正弦/三角/锯齿/方波各 1024 点）合成一块 4096×16 BSRAM，`{tab_sel, addr}` 寻址，**读延迟 1 拍、单读端口**（所以 `osc_bank` 的槽流水线一行不用改）。`$readmemh` 读 `rtl/audio/wav_bank_4096.mem` |
+| `wav_bank_4096.mem` | — | 4096 行 × 16 位有符号：行 0–1023 正弦、1024–2047 三角、2048–3071 锯齿、3072–4095 方波。三张新表**带宽限到 8 次谐波**。行 0–1023 与旧 `sine_1024.mem` **逐行一致**。**路径写死在 `wavetable_bank.v` 的 `$readmemh`，移动文件只改那一行** |
+| `osc_bank.v` | `osc_bank` | 核心。`VOICES` 个声部 × `VOICES×NCOMP` 个独立相位累加器，时分复用一套 ROM + 乘法器；输出 `raw_flat`（每声部 16 位有符号，叠加了各分量）。相位存 BSRAM。`wave_mode=1` 时 `tab_nx = cidx`（分量 c 读表 c）+ 幅度四等分 |
 | `adsr.v` | `adsr` | 5 态包络（IDLE/ATT/DEC/SUS/REL）。`ATT_STEP/DEC_STEP/REL_STEP/SUSTAIN` 全是参数，换音色只改参数 |
 | `mixer16.v` | `mixer16` | `VOICES` 路求和 + ±32767 饱和。`MIX_SHIFT` 是统一右移（防溢出） |
 | `audio_out.v` | `audio_out` | 音量（13 位 Q8，128..4096 = 0.5×..16×，默认索引 6 = 4.0×）、静音、测试音（94 Hz −12 dBFS 方波，绕过合成器） |
@@ -57,7 +57,7 @@
 
 ## 改代码时的约定
 
-1. **模块不得依赖自己的物理路径**，除了 `sine_rom.v` 的 `$readmemh`（它按
+1. **模块不得依赖自己的物理路径**，除了 `wavetable_bank.v` 的 `$readmemh`（它按
    工程根目录解析，这是 Gowin 和 iverilog 唯一共同的约定）。
 2. 新增模块后要同时改三处：`*.gprj` 的 `<FileList>`、`scripts/run_all_sim.ps1`
    的 `$RTL`、`scripts/sim.ps1` 的 `$rtl`。
@@ -66,3 +66,9 @@
 4. 出现意料之外的 `X` 或卡死，优先查**帧相位**：`fc` 的每个时隙边界必须严格
    对应 `OSC_END=1024 / ENV_END=1088 / MIX_END=1152`，改其中一个参数要同步检查
    其他模块里对 `fc` 的比较值。
+5. **新功能凡是"选通 / 旁路"已有信号，一律先在模块内部打一拍再输出**。
+   P0 的 `test_mode` 第一版用 `output wire` + `assign`，那 1 级 mux 正好串在
+   `note → inc_lut → <<oct` 这条最紧路径前面，Fmax 从 119.185 掉到 108.850 MHz
+   （约束 108，只剩 0.8%）。改成 `reg` 输出后就恢复了。
+6. **状态条的横向坐标不要用窄位宽的倒数乘法**。`{10'b0, x} * 20'd2731` 在 `x ≥ 384`
+   时溢出回绕，会让右半边重复点亮、标识块糊成一大片。用 22 位乘法 + 显式区间判断。

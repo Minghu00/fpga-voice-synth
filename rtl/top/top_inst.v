@@ -48,7 +48,10 @@ module top_inst #(
     parameter integer SUSTAIN  = 39_321,
     // sys clocks per LCD pixel.  12 -> 9 MHz for the real panel; the
     // testbench lowers it so 272-line frames simulate quickly.
-    parameter integer DIV      = 12
+    parameter integer DIV      = 12,
+    // audio samples a Key_3 press must be held to toggle wavetable mode
+    // (production 38 000 samples ~ 0.79 s; the testbench lowers it)
+    parameter integer WHOLD    = 38_000
 ) (
     input  wire clk27,
     input  wire rst_n,
@@ -147,8 +150,11 @@ module top_inst #(
     wire [1:0]  timbre;
     wire [3:0]  vol_raw;
     wire        test_s;
+    wire        wave_tog;
 
-    keymap8 u_keymap (
+    keymap8 #(
+        .VHOLD (WHOLD)
+    ) u_keymap (
         .clk      (clk_sys),
         .rst_n    (srst_n),
         .en       (sample_tick),
@@ -162,7 +168,8 @@ module top_inst #(
         .oct      (oct),
         .timbre   (timbre),
         .vol_raw  (vol_raw),
-        .test_o   (test_s)
+        .test_o   (test_s),
+        .wave_tog (wave_tog)
     );
 
     //------------------------------------------------------------------
@@ -242,12 +249,31 @@ module top_inst #(
     end
 
     // Test mode wins over latch mode: it wants every voice on regardless of
-    // what the player latched before reset.
+    // what the player latched before reset.  Wavetable mode does not touch the
+    // gate at all -- it only changes which table each additive component
+    // reads, so it is compatible with normal play, latch mode and test mode.
     wire [7:0] gate = test_en ? gate_t
                             : (latch_mode ? latch : gate_live);
 
     //------------------------------------------------------------------
-    // 32 oscillators (8 voices x 4 additive harmonics)
+    // Wavetable mode: 4 different tables, one per additive component
+    //
+    // Toggled by a LONG press (~0.79 s) of Key_3 -- the same button that steps
+    // the volume on a short press.  No new pin, and the selection is sticky
+    // across power cycles only in the sense that it resets to OFF, which is
+    // what you want: the default sound is exactly the one from before.
+    //------------------------------------------------------------------
+    reg wave_mode;
+
+    always @(posedge clk_sys) begin
+        if (!srst_n)
+            wave_mode <= 1'b0;
+        else if (wave_tog)
+            wave_mode <= ~wave_mode;
+    end
+
+    //------------------------------------------------------------------
+    // 32 oscillators (8 voices x 4 additive components)
     //------------------------------------------------------------------
     wire [16*VOICES-1:0] raw_flat;
 
@@ -261,6 +287,7 @@ module top_inst #(
         .note_flat(note_t),
         .timbre   (timbre_t),
         .oct      (oct_t),
+        .wave_mode(wave_mode),
         .raw_flat (raw_flat)
     );
 
@@ -540,6 +567,7 @@ module top_inst #(
         .timbre   (timbre_t),
         .vol      (vol_t),
         .test_en  (test_en),
+        .wave_mode(wave_mode),
         .lcd_dclk (lcd_dclk),
         .lcd_hs   (lcd_hs),
         .lcd_vs   (lcd_vs),

@@ -7,9 +7,11 @@
 - 采样率 **48 214.2857 Hz**（108 MHz / 2240），全部整数关系，无小数时钟
 - 控制信号 → 音频输出延迟 **62.38 µs**（赛题要求 ≤10 ms，余量 160×）
 - 混音吞吐量 **32 × 48 214.29 = 1.54 M 振荡器·次/秒**
-- 综合实测 **0 告警**，Fmax **119.647 MHz**（约束 108 MHz）
+- 综合实测 **0 告警**，Fmax **124.043 MHz**（约束 108 MHz，余量 14.9%）
 - 支持**现场测试模式**（上电时按住 Key_3）：8 个声部输出 8 个不同频率的纯正弦，
   频谱上 8 根互不重叠的谱峰 → `docs/测试模式证据.md`
+- 支持**多波表模式**（长按 Key_3 约 0.8 s）：4 个加法分量各读一张独立波表
+  （正弦 / 三角 / 锯齿 / 方波），坐实「4 个独立波表振荡器」→ `docs/多波表证据.md`
 
 ## 怎么用
 
@@ -33,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_inst.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_all_sim.ps1
 ```
 
-八个自检 testbench 全部 `ALL PASS` 才算通过。需要 iverilog 在
+九个自检 testbench 全部 `ALL PASS` 才算通过。需要 iverilog 在
 `D:\Gowin\tools\iverilog\bin`。单跑某个平台用 `scripts\sim.ps1 tb_inst`。
 
 ## 目录

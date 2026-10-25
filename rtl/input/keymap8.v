@@ -48,7 +48,10 @@
 
 module keymap8 #(
     // pressed level must be stable for VDB audio samples before it is accepted
-    parameter integer VDB = 256
+    parameter integer VDB = 256,
+    // hold this many audio samples to count as a LONG press (wavetable toggle)
+    // 38 000 samples at 48.214 kHz ~ 0.79 s
+    parameter integer VHOLD = 38_000
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -63,7 +66,8 @@ module keymap8 #(
     output reg  [1:0]  oct,
     output reg  [1:0]  timbre,
     output wire [3:0]  vol_raw,         // 4 bit volume index into audio_out
-    output reg         test_o
+    output reg         test_o,
+    output reg         wave_tog         // 1 clk pulse after a LONG Key_3 press
 );
 
     // note index per key, packed as {key7, key6, ... key0}
@@ -152,6 +156,45 @@ module keymap8 #(
     // SW3 position 5 adds one more step; clamp at the top of the table
     wire [4:0] vol_sum = {1'b0, vol_idx} + {4'b0, c5_s2[0]};
     assign vol_raw = (vol_sum > 5'd10) ? 4'd10 : vol_sum[3:0];
+
+    //------------------------------------------------------------------
+    // LONG press on the same button toggles the 4-wavetable additive mode
+    //
+    //  Key_3 is a two-function button:
+    //      short press  -> volume +1   (unchanged: it fires on press, above)
+    //      held >= VHOLD-> one wave_tog pulse when the threshold is crossed
+    //  Counting happens on `en` (the audio sample rate) so the hold time is
+    //  independent of the system clock.  Note that a long press still steps
+    //  the volume by one on its leading edge -- harmless by design (the
+    //  volume index always stays inside the audible 6..10 window).
+    //------------------------------------------------------------------
+    reg [15:0] hcnt;
+    reg        hold_fired, hold_prev;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            hcnt       <= 16'd0;
+            hold_fired <= 1'b0;
+            hold_prev  <= 1'b0;
+            wave_tog   <= 1'b0;
+        end else begin
+            hold_prev <= hold_fired;
+            wave_tog  <= hold_fired && !hold_prev;   // one clk pulse
+            if (en) begin
+                if (!v_stable) begin                  // debounced "pressed"
+                    if (hcnt == VHOLD[15:0] - 16'd1) begin
+                        hcnt       <= VHOLD[15:0];
+                        hold_fired <= 1'b1;
+                    end else if (hcnt < VHOLD[15:0]) begin
+                        hcnt <= hcnt + 16'd1;
+                    end
+                end else begin                        // released -> re-arm
+                    hcnt       <= 16'd0;
+                    hold_fired <= 1'b0;
+                end
+            end
+        end
+    end
 
     //------------------------------------------------------------------
     // static controls latched at the audio sample rate

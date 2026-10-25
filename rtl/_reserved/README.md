@@ -14,13 +14,13 @@
 | 文件 | 目标 | 对应赛题条目 | 预计工作量 |
 |---|---|---|---|
 | ~~`test_mode.v`~~ | ✅ **已实现**，已移入 `rtl/audio/test_mode.v` 并接入 `inst.gprj` | 评分③ | 已完成 |
-| `wavetable_bank.v` | 4 张不同波表，替代当前“1 张正弦表 + 4 个倍数分量” | 评分①（单波表只计 1 个振荡器） | 半天 |
+| ~~`wavetable_bank.v`~~ | ✅ **已实现**，已移入 `rtl/audio/wavetable_bank.v`（4 表合一 BSRAM）并接入 `inst.gprj` | 评分①（单波表只计 1 个振荡器） | 已完成 |
 | `vibrato_lfo.v` | 颤音 LFO（±N cent 正弦调制相位增量） | 拓展②（≥3 维表情） | 半天 |
 | `fx_echo.v` | 板内延迟/混响（BSRAM 环形缓冲） | 拓展②（FPGA 内部混响/延迟/合唱） | 1 天 |
 | `spectrum.v` | 实时频谱柱状图（8 点 DFT 或 8 带滤波器组） | 拓展③（实时频谱） | 1 天 |
 | `velocity_sense.v` | 力度检测接口 | 拓展②（力度） | 需硬件支持 |
 
-## 插入方式（以已完成的 `wavetable_bank.v` 为例）
+## 插入方式（以 `vibrato_lfo.v` 为例）
 
 1. 在 `rtl/top/top_inst.v` 里加一行例化，把输出接到目标模块的输入；
 2. 把 `rtl/_reserved/xxx.v` 移到对应板块目录（如 `rtl/audio/`）；
@@ -28,13 +28,17 @@
    `<File path="rtl/audio/xxx.v" type="file.verilog" enable="1"/>`；
 4. 在 `scripts/run_all_sim.ps1` 的 `$RTL` 和 `scripts/sim.ps1` 的 `$rtl` 里
    加上同一个路径；
-5. 跑 `scripts\run_all_sim.ps1` 确认八个平台仍然全绿，再
+5. 跑 `scripts\run_all_sim.ps1` 确认九个平台仍然全绿，再
    `scripts\build_inst.ps1` 出位流。
 
 > **P0 的实战教训（务必先看）**：`test_mode.v` 第一版用 `output wire` + `assign`
 > 组合选通，那 1 级 mux 正好串进 `note → inc_lut → <<oct` 这条最紧路径，
 > Fmax 从 119.185 掉到 **108.850 MHz**（只剩 0.8% 余量）。改成 `reg` 输出、
 > 在模块内打一拍后回到 119.647 MHz。**新功能凡是选通/旁路已有信号，一律先打拍。**
+>
+> **P3 的反面好消息**：`wavetable_bank.v` 把 4 张表合成一块 **BSRAM 同步读**，
+> 替掉了原来贴得较紧的组合 ROM 路径，Fmax 反而从 119.647 升到 **124.043 MHz**。
+> 所以"加功能必然掉时序"不是绝对的——换成同步读的存储体经常是净收益。
 
 ## 注意
 

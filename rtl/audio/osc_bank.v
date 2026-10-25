@@ -1,23 +1,32 @@
 //=============================================================================
-// osc_bank.v  --  16 voices x 4 additive components = 64 independent
-//                 phase accumulators sharing ONE sine ROM (time multiplexed)
+// osc_bank.v  --  VOICES x 4 additive components, every component owning its
+//                 own 32-bit phase accumulator, its own increment, and (in
+//                 wave_mode) its own wavetable
 //
 //  赛题评分口径 (评分①): 独立发声单元 = 独立相位累加器 + 频率调控 + 包络控制.
-//  Here EVERY one of the 64 harmonic components owns its own 32-bit phase
-//  accumulator and its own per-sample increment, so the bank really is
-//  64 independently-running oscillators, not one oscillator plus a
-//  shortcut.  The single shared ROM is a resource decision only: an
-//  oscillator slot is 16 clk wide, so 64 slots = 1024 clk of the 2240 clk
-//  audio frame -- 45 % utilisation, plenty of room left for the LCD.
+//  Here EVERY one of the VOICES*4 harmonic components owns its own 32-bit
+//  phase accumulator and its own per-sample increment, so the bank really is
+//  VOICES*4 independently-running oscillators, not one oscillator plus a
+//  shortcut.  Slots are time multiplexed (16 clk each), so VOICES=16 needs
+//  1024 clk of the 2240 clk audio frame; VOICES=8 needs 512 clk.
+//
+//  wave_mode decides how many wavetables the components share:
+//      wave_mode = 0   every component reads table 0 (sine) and the four
+//                      components are harmonics x1/x2/x3/x4 of it -- this is
+//                      the original behaviour, bit for bit.
+//      wave_mode = 1   component c reads table c (sine / triangle / saw /
+//                      square), so each component is a standalone wavetable
+//                      oscillator rather than a harmonic of one table.
+//  See wavetable_bank.v for the table contents and band-limiting.
 //
 //  Frame layout (fc comes from frame_gen):
 //      fc[9:4]  = oscillator slot 0..63   -> voice = slot[5:2], comp = slot[1:0]
 //      fc[3:0]  = pipeline sub-cycle 0..15
 //
 //  Slot pipeline
-//      sub0  read  phase[slot]                -> ph_q
-//      sub1  write phase[slot] = ph_q + inc   ; rom_a <= ph_q[31:22]
-//      sub2  (ROM access)
+//      sub0  read  phase[slot]                -> ph_q ; bstep_q <- inc_org[voice]
+//      sub1  write phase[slot] = ph_q + inc   ; rom_a <= ph_q[31:22] ; tab_q
+//      sub2  (BSRAM access)
 //      sub3  wav  <= rom_data
 //      sub4  prod <= wav * amp
 //      sub5  (multiplier pipeline)
@@ -25,7 +34,7 @@
 //      sub7  acc  <= (comp==0) ? cval : acc + cval
 //            if comp==3 : raw[voice] <= sat16(acc + cval) >> 1
 //
-//  Harmonic amplitudes (Q15, 32767 = 1.0) per timbre
+//  Harmonic amplitudes (Q15, 32767 = 1.0) per timbre  (wave_mode = 0 only)
 //      timbre 0  Organ   {1.000             }            pure sine
 //      timbre 1  Square  {1.000, .333, .200, .143}
 //      timbre 2  Saw     {1.000, .500, .333, .250}
@@ -43,6 +52,7 @@ module osc_bank #(
     input  wire [5*VOICES-1:0] note_flat,   // 16 x 5 bit note index
     input  wire [1:0]   timbre,
     input  wire [1:0]   oct,
+    input  wire         wave_mode,            // 1 = 4 different wavetables
     output wire [16*VOICES-1:0]  raw_flat     // 16 x 16 bit signed, pre-env
 );
 
@@ -99,10 +109,22 @@ module osc_bank #(
 
     //------------------------------------------------------------------
     // harmonic amplitude for this slot
+    //
+    //  wave_mode = 1 selects the WAVETABLE bank below: the four components
+    //  then read four DIFFERENT tables (sine / triangle / saw / square) and
+    //  get an equal-amplitude drawbar, so all four tiles are clearly audible.
+    //  Each component is then a standalone wavetable oscillator, not just a
+    //  harmonic multiple of one sine table (赛题评分① "单波表查表只计
+    //  1 个振荡器" -- four tables, four oscillators).
+    //
+    //  0.25 each keeps the four-component sum inside one full scale, so the
+    //  mixer's MIX_SHIFT=3 still leaves healthy headroom for eight voices.
     //------------------------------------------------------------------
     reg [63:0] amp_tab;
     always @(*) begin
-        case (timbre)
+        if (wave_mode)
+            amp_tab = {16'd8192, 16'd8192, 16'd8192, 16'd8192}; // 4 x 0.25
+        else case (timbre)
             2'd0: amp_tab = {16'd0,     16'd0,     16'd0,     16'd32767}; // organ
             2'd1: amp_tab = {16'd4681,  16'd6553,  16'd10923, 16'd32767}; // square
             2'd2: amp_tab = {16'd8192,  16'd10923, 16'd16384, 16'd32767}; // saw
@@ -111,12 +133,18 @@ module osc_bank #(
     end
     wire [15:0] amp = amp_tab[cidx*16 +: 16];
 
+    // Which wavetable this component reads.  wave_mode = 0 keeps the old
+    // behaviour exactly (every component reads table 0 = sine), so the four
+    // original timbres are bit-identical to before.
+    wire [1:0] tab_nx = wave_mode ? cidx : 2'd0;
+
     //------------------------------------------------------------------
     // phase accumulators (64 x 32 bit)
     //------------------------------------------------------------------
     reg [31:0] phase [0:OSCTOT-1];
     reg [31:0] ph_q;
     reg [9:0]  rom_a;
+    reg [1:0]  tab_q;              // wavetable index, registered with rom_a
     reg [15:0] wav;
     reg [31:0] prod;
     reg signed [17:0] cval;
@@ -128,10 +156,14 @@ module osc_bank #(
 
     wire [15:0] rom_d;
 
-    sine_rom u_sine_rom (
-        .clk  (clk),
-        .addr (rom_a),
-        .data (rom_d)
+    // One BSRAM holding all four 1024-point tables, addressed {tab, phase}.
+    // Same one-clock latency as the old single-table sine_rom, so the slot
+    // pipeline below is untouched.
+    wavetable_bank u_wav (
+        .clk     (clk),
+        .tab_sel (tab_q),
+        .addr    (rom_a),
+        .data    (rom_d)
     );
 
     function [15:0] sat16;
@@ -169,6 +201,7 @@ module osc_bank #(
             bstep_q <= 32'd0;
             ph_q <= 32'd0;
             rom_a <= 10'd0;
+            tab_q <= 2'd0;
             wav  <= 16'd0;
             prod <= 32'd0;
             cval <= 18'd0;
@@ -183,6 +216,7 @@ module osc_bank #(
                 4'd1: begin
                     phase[oslot] <= ph_q + inc;
                     rom_a        <= ph_q[31:22];
+                    tab_q        <= tab_nx;
                 end
 
                 4'd3: wav <= rom_d;

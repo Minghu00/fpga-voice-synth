@@ -70,6 +70,7 @@ module lcd_scope #(
     input  wire [1:0]           timbre,
     input  wire [3:0]           vol,            // audio_out gain index, for the status strip
     input  wire                 test_en,        // 1 = on-site self test is active
+    input  wire                 wave_mode,      // 1 = 4-wavetable additive mode
 
     // panel
     output wire         lcd_dclk,
@@ -196,6 +197,7 @@ module lcd_scope #(
     reg               key_q;
     reg               mode_q;
     reg               tst_q;            // test_en, pipelined with the geometry
+    reg               wm_q;             // wave_mode, same pipeline stage
     reg        [9:0]  x_q, y_q;
     reg        [1:0]  oct_q, tim_q;
     reg        [3:0]  vol_q4;
@@ -261,6 +263,7 @@ module lcd_scope #(
             lev_q  <= 4'd0;    key_q <= 1'b0;
             mode_q <= 1'b0;
             tst_q  <= 1'b0;
+                wm_q   <= 1'b0;
             x_q    <= 10'd0;   y_q   <= 10'd0;
             oct_q  <= 2'd0;    tim_q <= 2'd0;
             wlo_q  <= 16'sd0;  whi_q <= 16'sd0;
@@ -357,6 +360,7 @@ module lcd_scope #(
             key_q  <= key_gate[kcell[2:0]];
             mode_q <= latch_mode_w;
             tst_q  <= test_en;
+                wm_q   <= wave_mode;
             oct_q  <= oct;
             tim_q  <= timbre;
             vol_q4 <= vol;
@@ -403,21 +407,38 @@ module lcd_scope #(
     reg [5:0] ng;
     reg [4:0] nb;
 
-    // status strip: 24 px blocks, x/24 by reciprocal (65536/24 ~ 2730.7)
-    wire [19:0] m_stat = {10'b0, x_q} * 20'd2731;
+    // Status strip layout (y STAT_Y0..STAT_Y1), 12 px blocks by reciprocal
+    // (x*2731 >> 15 == x/12).  The product is widened to 22 bits because
+    // 1023*2731 needs 22 bits; the old 20-bit version wrapped at x >= 384.
+    //     x   0..47   octave  ladder, 4 blocks   (1 per octave 0..2)
+    //     x  48..95   timbre  ladder, 4 blocks   (1 per timbre 0..3)
+    //     x  96..155  volume  ladder, 5 blocks   (1 per gain step 6..10)
+    //     x 168..191  TEST flag   (on-site self test running)
+    //     x 192..215  WAVE flag   (4-wavetable mode running)
+    //
+    //  NOTE the ladders are explicitly gated to x < 156.  The old code used
+    //  sblk >= 14 for the TEST flag and let the ladder comparisons run all the
+    //  way to x = 479; because a 20-bit product overflows at x >= 384 the
+    //  block index wrapped back to 0 and the octave/timbre ladder lit up a
+    //  second time on the right half of the strip.  Explicit windows remove
+    //  both the wrap and the accidental 216 px wide "TEST" band.
+    wire [21:0] m_stat = {12'b0, x_q} * 22'd2731;
     wire [4:0]  sblk   = m_stat[19:15];
-    wire        oct_on = (sblk < 5'd4) && (sblk <= {3'b0, oct_q});
-    wire        tim_on = (sblk >= 5'd4) && (sblk < 5'd8) &&
-                         ((sblk - 5'd4) <= {3'b0, tim_q});
+    wire        in_oct = (x_q <  10'd48);
+    wire        in_tim = (x_q >= 10'd48)  && (x_q < 10'd96);
+    wire        in_vol = (x_q >= 10'd96)  && (x_q < 10'd156);
+    wire        in_tst = (x_q >= 10'd168) && (x_q < 10'd192);
+    wire        in_wav = (x_q >= 10'd192) && (x_q < 10'd216);
+
+    wire        oct_on = in_oct && (sblk <= {3'b0, oct_q});
+    wire        tim_on = in_tim && ((sblk - 5'd4) <= {3'b0, tim_q});
 
     // volume ladder: 5 blocks, x 96..155, one per gain step 6..10
     wire [3:0]  vol_lvl = (vol_q4 < 4'd6) ? 4'd0 : (vol_q4 - 4'd6);
-    wire        vol_on  = (sblk >= 5'd8) && (sblk < 5'd13) &&
-                          ((sblk - 5'd8) <= {1'b0, vol_lvl});
+    wire        vol_on  = in_vol && ((sblk - 5'd8) <= {1'b0, vol_lvl});
 
-    // TEST flag: the six right-hand blocks of the status strip go red while
-    // the on-site self test is running (x 336..479).
-    wire        tst_on  = tst_q && (sblk >= 5'd14);
+    wire        tst_on  = tst_q && in_tst;   // TEST flag: solid red
+    wire        wav_on  = wm_q  && in_wav;   // WAVE flag: solid orange
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -459,8 +480,11 @@ module lcd_scope #(
                     // volume ladder lights up left to right as gain rises
                     nr <= 5'd31; ng <= 6'd40; nb <= 5'd2;
                 end else if (tst_on) begin
-                    // TEST flag: solid red blocks, unmistakable at a glance
+                    // TEST flag: solid red, unmistakable at a glance
                     nr <= 5'd31; ng <= 6'd0;  nb <= 5'd0;
+                end else if (wav_on) begin
+                    // WAVE flag: solid orange = 4-wavetable additive mode
+                    nr <= 5'd31; ng <= 6'd24; nb <= 5'd0;
                 end
             end else begin
                 if (bar_hit) begin

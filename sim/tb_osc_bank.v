@@ -33,6 +33,9 @@ module tb_osc_bank;
 
     integer errors = 0;
     integer i;
+    integer tab_bad0 = 0;
+    integer tab_bad1 = 0;
+    reg     wave_m   = 1'b0;
 
     always #4.6296 clk = ~clk;
 
@@ -45,6 +48,7 @@ module tb_osc_bank;
         .note_flat(note_flat),
         .timbre   (timbre),
         .oct      (oct),
+        .wave_mode(wave_m),
         .raw_flat (raw_flat)
     );
 
@@ -213,6 +217,40 @@ module tb_osc_bank;
         end
         $display("      square peak +%0d / %0d", maxv, minv);
         check("square timbre peak exceeds sine peak", maxv > 16884);
+
+        //------------------------------------------------------------------
+        // 6. wavetable selection
+        //
+        //    wave_mode = 0 must keep every component on table 0 (the old
+        //    single-sine behaviour), and wave_mode = 1 must hand component c
+        //    its own table c.  tab_q is registered with rom_a, so it is valid
+        //    from sub1 of the slot onwards; sample it at sub3, which is where
+        //    the ROM data is consumed.
+        //------------------------------------------------------------------
+        tab_bad0 = 0;
+        tab_bad1 = 0;
+        wave_m   = 1'b0;
+        for (k = 0; k < 6000; k = k + 1) begin
+            @(posedge clk);
+            // only inside the oscillator window: above fc=1024 the bank is
+            // doing the increment pre-compute and the slot pipeline is idle,
+            // so tab_q legitimately holds the last slot's value.
+            if (rst_n && (fc < 12'd1024) && (dut.sub == 4'd3)
+                     && (dut.tab_q !== 2'd0))
+                tab_bad0 = tab_bad0 + 1;
+        end
+        check("wave_mode=0 reads table 0 for every component", tab_bad0 == 0);
+
+        wave_m = 1'b1;
+        for (k = 0; k < 6000; k = k + 1) begin
+            @(posedge clk);
+            if (rst_n && (fc < 12'd1024) && (dut.sub == 4'd3)
+                     && (dut.tab_q !== dut.cidx))
+                tab_bad1 = tab_bad1 + 1;
+        end
+        check("wave_mode=1 gives component c table c", tab_bad1 == 0);
+        wave_m = 1'b0;
+        run_frames(2);
 
         if (errors == 0)
             $display("== tb_osc_bank : ALL PASS ==");

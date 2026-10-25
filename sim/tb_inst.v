@@ -26,6 +26,7 @@ module tb_inst;
     reg  [3:0] dip    = 4'b0000;
     reg  [15:0] keys  = 16'h0000;
     reg        key_btn = 1'b0;
+    reg        vup_sw  = 1'b1;      // active-LOW: 1 = released
     wire       tp_scl, tp_sdo;
     wire       i2s_bclk, i2s_lrclk, i2s_din;
     wire       lcd_dclk, lcd_hs, lcd_vs, lcd_de;
@@ -47,7 +48,10 @@ module tb_inst;
         .DEC_STEP  (2),
         .REL_STEP  (4),
         .SUSTAIN   (16'd40000),
-        .DIV       (3)
+        .DIV       (3),
+        // 4 audio samples instead of 38 000 so the long-press wavetable
+        // toggle can be exercised inside a fast simulation
+        .WHOLD     (4)
     ) dut (
         .clk27    (clk27),
         .rst_n    (rst_n),
@@ -55,8 +59,9 @@ module tb_inst;
         .dip      (dip),
         .sw5_vol  (1'b0),
         // vup_sw is an active-LOW board key: 1'b0 means "held down", which
-        // now latches the on-site test mode at power-up.  Keep it released.
-        .vup_sw   (1'b1),
+        // latches the on-site test mode at power-up.  Keep it released, and
+        // drive it only from the wavetable-mode test at the end.
+        .vup_sw   (vup_sw),
         .test_sw  (1'b0),
         .key_btn  (key_btn),
         .tp_scl   (tp_scl),
@@ -411,6 +416,23 @@ integer bi;
     endtask
 
     //----------------------------------------------------------------------
+    // wait for the next audio sample tick (needed by the Key_3 long-press
+    // test, because keymap8 counts hold time on the sample tick)
+    //----------------------------------------------------------------------
+    task wait_one_sample;
+        integer g;
+        begin
+            g = 0;
+            // step off a tick boundary first so we cannot return immediately
+            @(posedge clk);
+            while (!dut.sample_tick && (g < 8000)) begin
+                g = g + 1;
+                @(posedge clk);
+            end
+        end
+    endtask
+
+    //----------------------------------------------------------------------
     // audio probe: min / max of the mixer output, reset by the test phases
     //----------------------------------------------------------------------
     integer wmin = 0, wmax = 0;
@@ -438,7 +460,7 @@ integer bi;
         $display("tb_inst: power-on");
         #2000;
         rst_n = 1'b1;
-        $display("tb_inst: sine rom[0]=%h rom[256]=%h", dut.u_osc.u_sine_rom.rom[0], dut.u_osc.u_sine_rom.rom[256]);
+        $display("tb_inst: sine rom[0]=%h rom[256]=%h", dut.u_osc.u_wav.rom[0], dut.u_osc.u_wav.rom[256]);
         $display("tb_inst: reset released");
 
         //------------------------------------------------------------------
@@ -649,6 +671,52 @@ integer bi;
         chk(dut.latch_mode == 1'b0, "Key_2 toggles latch mode off");
         chk_num(dut.latch, 8'h00,  "leaving latch mode clears it");
         chk_num(f_nkcells, 0,      "key cells go dark");
+
+        //------------------------------------------------------------------
+        // wavetable mode: a LONG Key_3 press toggles it, a SHORT press only
+        // steps the volume.  WHOLD is 4 samples here, so hold for 12 samples.
+        //------------------------------------------------------------------
+        chk(dut.wave_mode == 1'b0, "wavetable mode is off after reset");
+
+        // short press (2 samples) -> volume only, no mode change
+        begin : short_press
+            reg [3:0] vol_before;
+            vol_before = dut.vol_raw;
+            vup_sw = 1'b0;
+            repeat (2) wait_one_sample;
+            vup_sw = 1'b1;
+            repeat (4) wait_one_sample;
+            chk(dut.wave_mode == 1'b0, "short Key_3 press does not change wavetable mode");
+            chk(dut.vol_raw != vol_before, "short Key_3 press still steps the volume");
+        end
+
+        // long press -> mode toggles on, and stays on after release
+        begin : long_press_on
+            vup_sw = 1'b0;
+            repeat (16) wait_one_sample;
+            vup_sw = 1'b1;
+            repeat (4) wait_one_sample;
+            chk(dut.wave_mode == 1'b1, "long Key_3 press switches wavetable mode on");
+            $display("      wave_mode = %b (component c now reads table c;", dut.wave_mode);
+            $display("                   tb_osc_bank proves tab_q == cidx for every slot)");
+            // still audible: the mixer must keep producing a live signal
+            keys = 16'h0001;
+            base = frame_no;
+            wait_frames(base + 2);
+            chk(f_nwrows > 20, "wavetable mode still shows a live waveform");
+            keys = 16'h0000;
+            base = frame_no;
+            wait_frames(base + 2);
+        end
+
+        // long press again -> back to the original timbres
+        begin : long_press_off
+            vup_sw = 1'b0;
+            repeat (16) wait_one_sample;
+            vup_sw = 1'b1;
+            repeat (4) wait_one_sample;
+            chk(dut.wave_mode == 1'b0, "second long press switches wavetable mode off");
+        end
 
         //------------------------------------------------------------------
         if (errors == 0)

@@ -11,7 +11,7 @@
         <File path="rtl/input/keymap8.v" type="file.verilog" enable="1"/>
         <File path="rtl/audio/frame_gen.v" type="file.verilog" enable="1"/>
         <File path="rtl/audio/inc_lut.v" type="file.verilog" enable="1"/>
-        <File path="rtl/audio/sine_rom.v" type="file.verilog" enable="1"/>
+        <File path="rtl/audio/wavetable_bank.v" type="file.verilog" enable="1"/>
         <File path="rtl/audio/osc_bank.v" type="file.verilog" enable="1"/>
         <File path="rtl/audio/adsr.v" type="file.verilog" enable="1"/>
         <File path="rtl/audio/mixer16.v" type="file.verilog" enable="1"/>
@@ -23,6 +23,6 @@
         <File path="rtl/display/lcd_scope.v" type="file.verilog" enable="1"/>
         <File path="constraints/inst.cst" type="file.cst" enable="1"/>
         <File path="constraints/inst.sdc" type="file.sdc" enable="1"/>
-        <File path="rtl/audio/sine_1024.mem" type="file.other" enable="1"/>
+        <File path="rtl/audio/wav_bank_4096.mem" type="file.other" enable="1"/>
     </FileList>
 </Project>

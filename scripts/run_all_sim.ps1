@@ -10,7 +10,7 @@ $VVP = "D:\Gowin\tools\iverilog\bin\vvp.exe"
 $RTL = @(
  "rtl/top/top_inst.v",
  "rtl/audio/frame_gen.v","rtl/input/ttp229_rx.v","rtl/input/keymap8.v",
- "rtl/audio/inc_lut.v","rtl/audio/sine_rom.v","rtl/audio/osc_bank.v",
+ "rtl/audio/inc_lut.v","rtl/audio/wavetable_bank.v","rtl/audio/osc_bank.v",
  "rtl/audio/adsr.v","rtl/audio/mixer16.v","rtl/audio/i2s_tx.v","rtl/audio/audio_out.v",
  "rtl/audio/test_mode.v",
  "rtl/display/lcd_timing.v","rtl/display/wave_buf.v","rtl/display/lcd_scope.v"
@@ -21,7 +21,8 @@ $suites = @(
   @{ n="tb_audio_out"; f=@("rtl/audio/audio_out.v","rtl/audio/i2s_tx.v","sim/tb_audio_out.v") },
   @{ n="tb_adsr";      f=@("rtl/audio/adsr.v","sim/tb_adsr.v") },
   @{ n="tb_mixer16";   f=@("rtl/audio/mixer16.v","sim/tb_mixer16.v") },
-  @{ n="tb_osc_bank";  f=@("rtl/audio/inc_lut.v","rtl/audio/sine_rom.v","rtl/audio/osc_bank.v","sim/tb_osc_bank.v") },
+  @{ n="tb_osc_bank";  f=@("rtl/audio/inc_lut.v","rtl/audio/wavetable_bank.v","rtl/audio/osc_bank.v","sim/tb_osc_bank.v") },
+  @{ n="tb_wavetable"; f=@("rtl/audio/wavetable_bank.v","sim/tb_wavetable.v") },
   @{ n="tb_ttp229_rx"; f=@("rtl/input/ttp229_rx.v","sim/ttp229_model.v","sim/tb_ttp229_rx.v") },
   @{ n="tb_test_mode"; f=@("rtl/audio/test_mode.v","sim/tb_test_mode.v") },
   @{ n="tb_inst";      f=($RTL + @("sim/pll_sys_sim.v","sim/ttp229_model.v","sim/tb_inst.v")) }
