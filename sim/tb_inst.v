@@ -731,6 +731,24 @@ integer bi;
         chk(dut.u_osc.vib_d == 6'sd0, "vibrato depth is zero after reset");
         chk(dut.glide_en == 1'b0, "glide is off after reset");
 
+        // the glide lead note must be the note of the most recently pressed
+        // pad.  note_flat packs 5 bits per voice, so this also pins down the
+        // stride: a stride of 4 splices two adjacent notes together and the
+        // glide would land on the wrong pitch (a real bug caught here).
+        keys = 16'h0008;                       // TP3
+        base = frame_no;
+        wait_frames(base + 2);
+        chk_num(dut.lead_note, dut.note_flat[15 +: 5],
+            "glide lead note follows the newest pad (TP3)");
+        keys = 16'h0020;                       // TP5
+        base = frame_no;
+        wait_frames(base + 2);
+        chk_num(dut.lead_note, dut.note_flat[25 +: 5],
+            "glide lead note follows the newest pad (TP5)");
+        keys = 16'h0000;
+        base = frame_no;
+        wait_frames(base + 2);
+
         // the echo line delays by exactly two samples whether it is on or off,
         // so the mixer -> audio_out handshake must keep a 1:1 pulse ratio.
         base = frame_no;

@@ -368,7 +368,33 @@ module top_inst #(
         end
     end
 
-    wire [4:0] lead_note = note_flat[{lead_key, 2'b00} +: 5];
+    //  note_flat is packed 5 bits per voice (stride 5, matching osc_bank's
+    //  note_flat[pvidx*5 +: 5]).  A stride of 4 here silently splices two
+    //  adjacent notes together and the glide lands on the wrong pitch.
+    //
+    //  The slice is picked with an explicit 8:1 mux and then registered,
+    //  rather than written as note_flat[lead_key*5 +: 5]:  the multiply is a
+    //  real adder, and routing its result straight into inc_lut pushed the
+    //  design from 111.8 MHz down to 108.3 MHz (0.3 % margin).
+    reg [4:0] lead_note_c;
+    always @(*) begin
+        case (lead_key)
+            3'd0:    lead_note_c = note_flat[0*5 +: 5];
+            3'd1:    lead_note_c = note_flat[1*5 +: 5];
+            3'd2:    lead_note_c = note_flat[2*5 +: 5];
+            3'd3:    lead_note_c = note_flat[3*5 +: 5];
+            3'd4:    lead_note_c = note_flat[4*5 +: 5];
+            3'd5:    lead_note_c = note_flat[5*5 +: 5];
+            3'd6:    lead_note_c = note_flat[6*5 +: 5];
+            default: lead_note_c = note_flat[7*5 +: 5];
+        endcase
+    end
+
+    reg [4:0] lead_note;
+    always @(posedge clk_sys) begin
+        if (!srst_n)          lead_note <= 5'd0;
+        else if (sample_tick) lead_note <= lead_note_c;
+    end
 
     // voice 0 plays the lead note while gliding, and is gated on as long as
     // anything is held, so the slide is audible on its own.

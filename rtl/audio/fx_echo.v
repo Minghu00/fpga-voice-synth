@@ -70,6 +70,13 @@ module fx_echo #(
     reg  signed [15:0] rd_q;
     reg                en1, en2;
 
+    // write-back pipeline (capture tap -> feedback gain -> write)
+    reg  signed [15:0] tap_q;
+    reg  signed [15:0] fbg_q;
+    reg  signed [15:0] dinq;
+    reg  [DEPTH_LOG2-1:0] wa_q;
+    reg  [2:0] vld;
+
     // Until the delay line has been filled there is nothing to echo.  On the
     // board the BSRAM happens to power up as zero, but a simulation starts it
     // as X and X would then propagate through the wet multiply into the DAC.
@@ -93,12 +100,15 @@ module fx_echo #(
         end
     endfunction
 
-    // Feedback and wet gains are pure shifts, so the only arithmetic between
-    // the BSRAM output and its write port is one 17-bit add and the clamp.
+    // Feedback and wet gains are pure shifts, so the arithmetic is only adds
+    // and the clamp.  It is still split across three `en` cycles (capture tap
+    // -> feedback gain -> write) because a single clock from the BSRAM output
+    // through the clamp and back into the write port left 0.014 ns of margin
+    // (Fmax 108.3 MHz).  `en` fires once per 2240 clocks, so the two extra
+    // cycles cost nothing.
     wire signed [15:0] dly      = primed ? mem_d : 16'sd0;  // delayed sample
-    wire signed [15:0] fb_gain  = FB_ENABLE ? ((dly >>> FB_SH) + (dly >>> (FB_SH + 1)))
+    wire signed [15:0] fbg_new  = FB_ENABLE ? ((tap_q >>> FB_SH) + (tap_q >>> (FB_SH + 1)))
                                             : 16'sd0;
-    wire signed [16:0] fb_sum   = din + {{1{fb_gain[15]}}, fb_gain};
 
     // wet term is gated by `on`; when off it is exactly zero, so the output
     // becomes a pure (2-sample delayed) copy of the input.
@@ -106,26 +116,39 @@ module fx_echo #(
     wire signed [16:0] wet_term = on ? {{1{wet_gain[15]}}, wet_gain} : 17'sd0;
     wire signed [16:0] wet_sum  = din_q + wet_term;
 
+    // write-back sum built from registers only (dinq / fbg_q)
+    wire signed [16:0] wb_sum   = dinq + {{1{fbg_q[15]}}, fbg_q};
+
     //------------------------------------------------------------------
-    // BSRAM + its pointers.  Read every clk, write only on `en` -- the same
-    // shape as wave_buf.v, which infers cleanly in Gowin.  No async reset:
-    // a BSRAM write port cannot have one, so use an initial value instead.
+    // BSRAM + its pointers.  Read every clk; write two `en` cycles later, so
+    // the feedback port is driven by flops instead of the BSRAM output.  No
+    // async reset: a BSRAM write port cannot have one, use an initial value.
     //------------------------------------------------------------------
     initial begin
         waddr    = 0;
         din_q    = 0;
         rd_q     = 0;
+        tap_q    = 0;
+        fbg_q    = 0;
+        dinq     = 0;
+        wa_q     = 0;
+        vld      = 3'd0;
         prim_cnt = 0;
         primed   = 1'b0;
     end
 
     always @(posedge clk) begin
         mem_d <= mem[raddr];
+        vld   <= {vld[1:0], en};
+
         if (en) begin
-            mem[waddr] <= sat16(fb_sum);
-            din_q      <= din;
-            rd_q       <= dly;
-            waddr      <= waddr + 1'b1;
+            // stage 1 : capture the tap and the address it belongs to
+            tap_q <= dly;
+            dinq  <= din;          // dry, for the write-back path
+            din_q <= din;          // dry, for the output sum
+            rd_q  <= dly;
+            wa_q  <= waddr;
+            waddr <= waddr + 1'b1;
             if (!primed) begin
                 if (prim_cnt >= PRIME[15:0] - 16'd1)
                     primed <= 1'b1;
@@ -133,6 +156,14 @@ module fx_echo #(
                     prim_cnt <= prim_cnt + 16'd1;
             end
         end
+
+        // stage 2 : feedback gain from the registered tap
+        if (vld[0])
+            fbg_q <= fbg_new;
+
+        // stage 3 : write dry + feedback back into the ring
+        if (vld[1])
+            mem[wa_q] <= sat16(wb_sum);
     end
 
     always @(posedge clk or negedge rst_n) begin
