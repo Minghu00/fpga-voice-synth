@@ -25,7 +25,7 @@ module tb_inst;
     reg        rst_n  = 1'b0;
     reg  [3:0] dip    = 4'b0000;
     reg  [15:0] keys  = 16'h0000;
-    reg        key_btn = 1'b0;
+    reg        key_btn = 1'b1;   // Silicon Key_2: released = 1
     reg        vup_sw  = 1'b1;      // active-LOW: 1 = released
     wire       tp_scl, tp_sdo;
     wire       i2s_bclk, i2s_lrclk, i2s_din;
@@ -51,7 +51,8 @@ module tb_inst;
         .DIV       (3),
         // 4 audio samples instead of 38 000 so the long-press wavetable
         // toggle can be exercised inside a fast simulation
-        .WHOLD     (4)
+        .WHOLD     (4),
+        .BTHR      (40)
     ) dut (
         .clk27    (clk27),
         .rst_n    (rst_n),
@@ -625,9 +626,9 @@ integer bi;
         //    Silicon Key_2 toggles latch mode: each tap toggles its note, so
         //    a chord can be built one finger at a time.
         //------------------------------------------------------------------
-        key_btn = 1'b1;
-        repeat (6) @(posedge clk);
         key_btn = 1'b0;
+        repeat (6) @(posedge clk);
+        key_btn = 1'b1;
         repeat (6) @(posedge clk);
         chk(dut.latch_mode == 1'b1, "Key_2 toggles latch mode on");
 
@@ -658,9 +659,9 @@ integer bi;
         chk(f_nwrows > 20, "both latched notes are audible (waveform alive)");
 
         // latch off again -> everything goes dark
-        key_btn = 1'b1;
-        repeat (6) @(posedge clk);
         key_btn = 1'b0;
+        repeat (6) @(posedge clk);
+        key_btn = 1'b1;
         base = frame_no;
         wait_frames(base + 4);
 
@@ -717,6 +718,84 @@ integer bi;
             repeat (4) wait_one_sample;
             chk(dut.wave_mode == 1'b0, "second long press switches wavetable mode off");
         end
+
+        //------------------------------------------------------------------
+        // expression bank (赛题拓展②): vibrato / echo / glide
+        //   Key_2 short press  -> latch mode      (tested above)
+        //   Key_2 long  press  -> fx_mode + 1     (BTHR is 40 clk here)
+        // With fx_mode = 0 every one of the three is bypassed, so the sound
+        // must be bit-identical to the pre-P2 build.
+        //------------------------------------------------------------------
+        chk(dut.fx_mode == 3'd0, "expression bank is bypassed after reset");
+        chk(dut.u_echo.on == 1'b0, "echo line is off after reset");
+        chk(dut.u_osc.vib_d == 6'sd0, "vibrato depth is zero after reset");
+        chk(dut.glide_en == 1'b0, "glide is off after reset");
+
+        // the echo line delays by exactly two samples whether it is on or off,
+        // so the mixer -> audio_out handshake must keep a 1:1 pulse ratio.
+        base = frame_no;
+        begin : echo_tick_ratio
+            integer n_ok, n_tick;
+            n_ok   = 0;
+            n_tick = 0;
+            fork
+                begin
+                    wait_frames(base + 3);
+                end
+                begin
+                    while (frame_no < (base + 3)) begin
+                        @(posedge clk);
+                        if (dut.mix_ok)  n_ok   = n_ok + 1;
+                        if (dut.echo_tick) n_tick = n_tick + 1;
+                    end
+                end
+            join
+            chk_num(n_tick, n_ok, "echo passes exactly one valid pulse per mix");
+        end
+
+        // hold Key_2 long enough to step the FX bank once: vibrato on
+        key_btn = 1'b0;
+        repeat (60) @(posedge clk);
+        key_btn = 1'b1;
+        repeat (12) @(posedge clk);
+        chk_num(dut.fx_mode, 3'd1, "long Key_2 press steps the FX bank to 1");
+        chk(dut.fx_mode[0] == 1'b1, "FX = 1 selects the vibrato");
+
+        // ... and a long press must NOT also toggle latch mode
+        chk(dut.latch_mode == 1'b0,
+            "a long Key_2 press does not toggle latch mode");
+
+        // keep stepping: 1 -> 2 (echo) -> 3 (echo + vibrato) -> ... -> 0
+        key_btn = 1'b0;
+        repeat (60) @(posedge clk);
+        key_btn = 1'b1;
+        repeat (12) @(posedge clk);
+        chk_num(dut.fx_mode, 3'd2, "second long press steps the FX bank to 2");
+        chk(dut.u_echo.on == 1'b1, "FX = 2 switches the echo line on");
+
+        // with the echo on the note must still sound, and the I2S word must
+        // still be phase locked (din keeps toggling)
+        keys = 16'h0001;
+        base = frame_no;
+        din0 = din_edges;
+        wait_frames(base + 3);
+        chk((din_edges - din0) > 200,
+            "I2S din keeps toggling while the echo is on");
+        keys = 16'h0000;
+        base = frame_no;
+        wait_frames(base + 2);
+
+        // step all the way round: 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 0
+        begin : fx_wrap
+            integer st;
+            for (st = 0; st < 6; st = st + 1) begin
+                key_btn = 1'b0;
+                repeat (60) @(posedge clk);
+                key_btn = 1'b1;
+                repeat (12) @(posedge clk);
+            end
+        end
+        chk_num(dut.fx_mode, 3'd0, "FX bank wraps from 7 back to 0 (bypassed)");
 
         //------------------------------------------------------------------
         if (errors == 0)

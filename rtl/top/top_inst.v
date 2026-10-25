@@ -51,7 +51,10 @@ module top_inst #(
     parameter integer DIV      = 12,
     // audio samples a Key_3 press must be held to toggle wavetable mode
     // (production 38 000 samples ~ 0.79 s; the testbench lowers it)
-    parameter integer WHOLD    = 38_000
+    parameter integer WHOLD    = 38_000,
+    // sys clocks a Key_2 press must be held to step the FX bank
+    // (production 86 400 000 clocks ~ 0.80 s; the testbench lowers it)
+    parameter integer BTHR     = 86_400_000
 ) (
     input  wire clk27,
     input  wire rst_n,
@@ -224,18 +227,63 @@ module top_inst #(
     reg       latch_mode;
 
     reg [2:0] btn_sync;              // 2FF + 1 edge-detect stage
-    wire      btn_rise = btn_sync[2] & ~btn_sync[1];
+    wire      btn_rise = btn_sync[2] & ~btn_sync[1];   // press  (1 -> 0)
+    wire      btn_rel  = ~btn_sync[2] & btn_sync[1];   // release(0 -> 1)
     wire [7:0] key_rise = gate_live & ~key_d;
+
+    //------------------------------------------------------------------
+    // Key_2 long press (~0.8 s) cycles the expression/effect bank:
+    //
+    //      fx_mode   bit0 vibrato   bit1 echo   bit2 glide
+    //      0  off            -          -          -     <- default
+    //      1  vibrato        on         -          -
+    //      2  echo           -          on         -
+    //      3  vibrato+echo   on         on         -
+    //      4  glide          -          -          on
+    //      5  glide+vibrato  on         -          on
+    //      6  glide+echo     -          on         on
+    //      7  everything     on         on         on
+    //
+    // A SHORT press still toggles latch mode, exactly as before; a long press
+    // sets btn_long so the release edge does not also flip latch mode.
+    //------------------------------------------------------------------
+    localparam [26:0] BTHR_C = BTHR[26:0];   // 0.8 s at 108 MHz by default
+
+    reg [26:0] bhold;
+    reg        btn_long;
+    reg [2:0]  fx_mode;
+    wire       btn_down      = ~btn_sync[1];
+    wire       btn_down_prev = ~btn_sync[2];
 
     always @(posedge clk_sys) begin
         if (!srst_n) begin
-            btn_sync   <= 3'b000;
+            btn_sync   <= 3'b111;
             latch_mode <= 1'b0;
             latch      <= 8'd0;
             key_d      <= 8'd0;
+            bhold      <= 27'd0;
+            btn_long   <= 1'b0;
+            fx_mode    <= 3'd0;
         end else begin
             btn_sync <= {btn_sync[1:0], key_btn};
-            if (btn_rise)
+
+            // a fresh press restarts the hold timer
+            if (btn_down && !btn_down_prev) begin
+                bhold    <= 27'd0;
+                btn_long <= 1'b0;
+            end else if (btn_down) begin
+                if (bhold < BTHR_C)
+                    bhold <= bhold + 1'b1;
+                else if (!btn_long) begin
+                    btn_long <= 1'b1;
+                    fx_mode  <= fx_mode + 3'd1;
+                end
+            end
+
+            // Toggle latch mode on a SHORT press.  The decision is taken on
+            // the release edge so that a LONG press is free to cycle the FX
+            // bank instead of doing both things at once.
+            if (btn_rel && !btn_long)
                 latch_mode <= ~latch_mode;
 
             if (sample_tick) begin
@@ -273,6 +321,61 @@ module top_inst #(
     end
 
     //------------------------------------------------------------------
+    // Expression bank  (赛题拓展②: 滑音 / 颤音 / 延迟)
+    //
+    //   glide   : portamento on voice 0, re-purposed as a lead voice that
+    //             follows the most recently touched pad.  Every other voice
+    //             keeps playing its own key, so a chord plus a gliding lead
+    //             is possible.
+    //   vibrato : 5 Hz multiplicative LFO on every voice.
+    //   echo    : one in-FPGA delay line after the mixer.
+    //
+    // All three are OFF by default (fx_mode = 0), and with them off every
+    // signal takes exactly the same value as before this feature existed.
+    //------------------------------------------------------------------
+    wire vib_on   = fx_mode[0];
+    wire echo_on  = fx_mode[1];
+    wire glide_en = fx_mode[2];
+
+    //------------------------------------------------------------------
+    // vibrato LFO (one shared LFO, applied per voice inside osc_bank)
+    //------------------------------------------------------------------
+    wire signed [5:0] vib_d;
+    wire signed [5:0] vib_abs;
+
+    vibrato_lfo u_lfo (
+        .clk   (clk_sys),
+        .rst_n (srst_n),
+        .en    (sample_tick),
+        .on    (vib_on),
+        .d     (vib_d),
+        .d_abs (vib_abs)
+    );
+
+    //------------------------------------------------------------------
+    // lead note for the glide voice: the pad touched most recently
+    //------------------------------------------------------------------
+    reg [2:0] lead_key;
+    integer   kk;
+
+    always @(posedge clk_sys) begin
+        if (!srst_n)
+            lead_key <= 3'd0;
+        else if (sample_tick) begin
+            for (kk = 0; kk < VOICES; kk = kk + 1)
+                if (key_rise[kk])
+                    lead_key <= kk[2:0];       // highest-numbered new pad wins
+        end
+    end
+
+    wire [4:0] lead_note = note_flat[{lead_key, 2'b00} +: 5];
+
+    // voice 0 plays the lead note while gliding, and is gated on as long as
+    // anything is held, so the slide is audible on its own.
+    wire [39:0] note_g = glide_en ? {note_t[39:5], lead_note} : note_t;
+    wire [7:0]  gate_g = glide_en ? (gate | {7'd0, (|gate)}) : gate;
+
+    //------------------------------------------------------------------
     // 32 oscillators (8 voices x 4 additive components)
     //------------------------------------------------------------------
     wire [16*VOICES-1:0] raw_flat;
@@ -284,10 +387,12 @@ module top_inst #(
         .clk      (clk_sys),
         .rst_n    (srst_n),
         .fc       (fc),
-        .note_flat(note_t),
+        .note_flat(note_g),
         .timbre   (timbre_t),
         .oct      (oct_t),
         .wave_mode(wave_mode),
+        .glide_en (glide_en),
+        .vib_d    (vib_on ? vib_d : 6'sd0),
         .raw_flat (raw_flat)
     );
 
@@ -308,7 +413,7 @@ module top_inst #(
                 .clk   (clk_sys),
                 .rst_n (srst_n),
                 .en    (sample_tick),
-                .gate  (gate[gi]),
+                .gate  (gate_g[gi]),
                 .env   (env_flat[gi*16 +: 16]),
                 .active()
             );
@@ -337,6 +442,33 @@ module top_inst #(
     );
 
     //------------------------------------------------------------------
+    // in-FPGA delay line (赛题拓展②: 延迟)
+    //
+    // Sits between the mixer and the final stage.  It adds exactly two
+    // sample periods of latency whether it is on or off, and it publishes
+    // its own 'valid' pulse so that audio_out stays phase locked to i2s_tx.
+    // When echo_on = 0 the wet term is forced to zero, so the signal path is
+    // a pure 2-sample delay and the audible result is unchanged.
+    //------------------------------------------------------------------
+    wire signed [15:0] echo_s;
+    wire               echo_tick;
+
+    fx_echo #(
+        .DEPTH_LOG2 (13),        // 8192 samples = 169.9 ms of buffer
+        .DELAY      (6000),      // 124.4 ms
+        .FB_SH       (2),         // 0.375 feedback
+        .WET_SH      (2)          // 0.25 wet
+    ) u_echo (
+        .clk   (clk_sys),
+        .rst_n (srst_n),
+        .en    (mix_ok),
+        .on    (echo_on),
+        .din   ($signed(mix_out)),
+        .dout  (echo_s),
+        .en_o  (echo_tick)
+    );
+
+    //------------------------------------------------------------------
     // final audio stage: digital volume + test tone + mute
     //
     // The mixer hands over one sample per frame, but i2s_tx restarts its
@@ -356,8 +488,8 @@ module top_inst #(
         .clk       (clk_sys),
         .rst_n     (srst_n),
         .frame_tick(sample_tick),
-        .mix_ok    (mix_ok),
-        .mix_in    (mix_out),
+        .mix_ok    (echo_tick),
+        .mix_in    (echo_s),
         .vol_raw   (vol_t),
         // Mute is NOT driven by a board key any more.  Every "Silicone Key_n"
         // net on the Dock has a 10 k pull-up to +1V5 and only goes low while
@@ -568,6 +700,7 @@ module top_inst #(
         .vol      (vol_t),
         .test_en  (test_en),
         .wave_mode(wave_mode),
+        .fx       (fx_mode),
         .lcd_dclk (lcd_dclk),
         .lcd_hs   (lcd_hs),
         .lcd_vs   (lcd_vs),

@@ -43,8 +43,9 @@
 `timescale 1ns / 1ps
 
 module osc_bank #(
-    parameter integer VOICES = 16,
-    parameter integer NCOMP  = 4
+    parameter integer VOICES   = 16,
+    parameter integer NCOMP    = 4,
+    parameter integer GLIDE_K  = 6          // glide time constant, see below
 )(
     input  wire         clk,
     input  wire         rst_n,
@@ -53,6 +54,8 @@ module osc_bank #(
     input  wire [1:0]   timbre,
     input  wire [1:0]   oct,
     input  wire         wave_mode,            // 1 = 4 different wavetables
+    input  wire         glide_en,             // 1 = portamento on
+    input  wire signed [5:0] vib_d,           // vibrato detune, Q10 (=0 -> off)
     output wire [16*VOICES-1:0]  raw_flat     // 16 x 16 bit signed, pre-env
 );
 
@@ -91,6 +94,38 @@ module osc_bank #(
 
     reg [31:0] inc_org [0:VOICES-1];                   // 16 x 32 bit
     reg [31:0] pinc_q;                                 // pre-compute pipe stage
+
+    //------------------------------------------------------------------
+    // Glide (portamento) + vibrato, both applied to the per-voice BASE
+    // increment inside the pre-compute tail window.
+    //
+    // Glide:      inc <- inc + ((target - inc) >>> GLIDE_K)
+    //             An exponential approach, so the pitch slides by a constant
+    //             musical interval per time unit rather than a constant Hz.
+    //             GLIDE_K = 6 at one update per frame is a 1 - 2^-6 per frame
+    //             pole; 64 frames = 1.33 ms for one time constant, so the
+    //             pitch has essentially arrived after ~5 ms.  (The visual
+    //             "slide" is deliberately short: 10 ms is the whole latency
+    //             budget, so a slow portamento would look like a detector
+    //             fault on a scope.)
+    //             A voice whose inc_org is still 0 has never sounded, so it
+    //             snaps to the target instead of sliding up from DC.
+    //
+    // Vibrato:    inc <- inc + ((inc >>> 10) * vib_d)
+    //             multiplicative, i.e. a constant interval at every pitch.
+    //             vib_d = 0 makes both terms exactly zero, which is what makes
+    //             the "effects off" path bit-identical to the previous build.
+    //
+    // The window gives 16 clk per voice, so the arithmetic is spread over
+    // sub 1..7 rather than done in one clock -- none of it lands on the
+    // phase accumulator's timing path.
+    //------------------------------------------------------------------
+    reg  signed [32:0] targ_q;    // target increment after the octave shift
+    reg  signed [32:0] cur_q;     // current increment of this voice
+    reg  signed [32:0] diff_q;    // target - current
+    reg  signed [32:0] gl_q;      // after the glide step
+    reg  signed [32:0] vp_q;      // vibrato product
+    reg  signed [32:0] fin_q;     // final value, ready to be written back
 
     // Harmonic step derived from the registered base increment.
     // bstep_q is loaded in sub0 together with ph_q so that the 16-way mux
@@ -199,6 +234,12 @@ module osc_bank #(
             // 1.5 ns of slack.
             pinc_q  <= 32'd0;
             bstep_q <= 32'd0;
+            targ_q  <= 33'sd0;
+            cur_q   <= 33'sd0;
+            diff_q  <= 33'sd0;
+            gl_q    <= 33'sd0;
+            vp_q    <= 33'sd0;
+            fin_q   <= 33'sd0;
             ph_q <= 32'd0;
             rom_a <= 10'd0;
             tab_q <= 2'd0;
@@ -235,12 +276,32 @@ module osc_bank #(
             endcase
         end else if (fc >= OSC_END && fc < PRE_END) begin
             // tail of the frame: refresh one voice's base increment every
-            // 16 clk, in two stages so that neither the LUT read nor the
-            // octave barrel shifter sits in the accumulator's timing path
-            if (fc[3:0] == 4'd1)
-                pinc_q <= pinc;
-            else if (fc[3:0] == 4'd2)
-                inc_org[pvidx] <= pinc_q << oct;        // oct = 0,1,2 -> x1,x2,x4
+            // 16 clk.  Everything is staged so that neither the LUT read,
+            // the octave barrel shifter, the glide subtract, nor the vibrato
+            // multiply sits inside a single clock period.
+            case (fc[3:0])
+                4'd1: pinc_q <= pinc;
+
+                4'd2: targ_q <= {1'b0, (pinc_q << oct)};   // oct = 0,1,2 -> x1,x2,x4
+
+                4'd3: begin
+                    cur_q  <= {1'b0, inc_org[pvidx]};
+                    diff_q <= targ_q - {1'b0, inc_org[pvidx]};
+                end
+
+                4'd4: gl_q <= (glide_en && (cur_q != 33'sd0))
+                              ? (cur_q + (diff_q >>> GLIDE_K))
+                              : targ_q;
+
+                4'd5: vp_q <= ($signed(gl_q[32:10]) * vib_d);
+
+                4'd6: fin_q <= gl_q + vp_q;
+
+                // write back: keep it positive and inside 32 bits
+                4'd7: inc_org[pvidx] <= fin_q[32] ? 32'd0 : fin_q[31:0];
+
+                default: ;
+            endcase
         end
     end
 

@@ -36,6 +36,8 @@ module tb_osc_bank;
     integer tab_bad0 = 0;
     integer tab_bad1 = 0;
     reg     wave_m   = 1'b0;
+    reg     glide_m  = 1'b0;
+    reg signed [5:0] vib_m = 6'sd0;
 
     always #4.6296 clk = ~clk;
 
@@ -49,6 +51,8 @@ module tb_osc_bank;
         .timbre   (timbre),
         .oct      (oct),
         .wave_mode(wave_m),
+        .glide_en (glide_m),
+        .vib_d    (vib_m),
         .raw_flat (raw_flat)
     );
 
@@ -61,29 +65,45 @@ module tb_osc_bank;
     //------------------------------------------------------------------
     // helpers
     //------------------------------------------------------------------
+    // iverilog's %0s stops at the first NUL byte, and a string shorter than
+    // the task argument lives right-justified with leading zeros.  Print the
+    // name byte by byte instead so the whole message survives.
+    task print_name;
+        input [511:0] name;
+        integer bi;
+        begin
+            for (bi = 63; bi >= 0; bi = bi - 1)
+                if (name[bi*8 +: 8] != 8'd0)
+                    $write("%c", name[bi*8 +: 8]);
+        end
+    endtask
+
     task check;
-        input [255:0] name;
+        input [511:0] name;
         input         cond;
         begin
             if (cond !== 1'b1) begin
-                $display("FAIL  %0s", name);
+                $write("FAIL  "); print_name(name); $write("\n");
                 errors = errors + 1;
-            end else
-                $display("PASS  %0s", name);
+            end else begin
+                $write("PASS  "); print_name(name); $write("\n");
+            end
         end
     endtask
 
     task check_num;
-        input [255:0] name;
+        input [511:0] name;
         input integer got;
         input integer want;
         begin
             if (got !== want) begin
-                $display("FAIL  %0s : got %0d (%h) want %0d (%h)",
-                         name, got, got, want, want);
+                $write("FAIL  "); print_name(name);
+                $display(" : got %0d (%h) want %0d (%h)", got, got, want, want);
                 errors = errors + 1;
-            end else
-                $display("PASS  %0s : %0d", name, got);
+            end else begin
+                $write("PASS  "); print_name(name);
+                $display(" : %0d", got);
+            end
         end
     endtask
 
@@ -251,6 +271,99 @@ module tb_osc_bank;
         check("wave_mode=1 gives component c table c", tab_bad1 == 0);
         wave_m = 1'b0;
         run_frames(2);
+
+        //------------------------------------------------------------------
+        // 6. glide (portamento)
+        //    With glide_en = 0 the increment jumps to the new note at once.
+        //    With glide_en = 1 it walks there exponentially, never overshoots,
+        //    and still arrives.  Measured on the phase step of phase[0],
+        //    which is exactly the increment the accumulator used.
+        //------------------------------------------------------------------
+        note_flat[4:0] = 5'd0;                     // C4
+        glide_m = 1'b0;
+        run_frames(2);
+        p0 = dut.phase[0];
+        run_frames(1);
+        check_num("glide off: jump to the new note is immediate",
+                  dut.phase[0] - p0, inc_exp);
+
+        // now ask for one octave up WITH glide; the first frames must be
+        // strictly between the old and the new increment
+        glide_m = 1'b1;
+        oct     = 2'd1;
+        run_frames(1);
+        p0 = dut.phase[0];
+        run_frames(1);
+        begin : glide_mid
+            reg [31:0] step;
+            step = dut.phase[0] - p0;
+            check("glide on: first step lands between old and new pitch",
+                  (step > inc_exp) && (step < (inc_exp << 1)));
+        end
+
+        // ... and it converges: the one-pole walks 1/64 of the remaining
+        // distance per frame, so after 500 frames the residual is
+        // (63/64)^500 ~ 0.04 % of a semitone-free octave.  Integer
+        // truncation finally stalls it within 63 counts of the target,
+        // so compare with a tolerance instead of exact equality.
+        run_frames(900);
+        p0 = dut.phase[0];
+        run_frames(1);
+        begin : glide_end
+            reg [31:0] step;
+            step = dut.phase[0] - p0;
+            check("glide on: converges to the new increment",
+                  (step > (inc_exp << 1) - 32'd4000) &&
+                  (step <= (inc_exp << 1)));
+            $display("      glide endpoint %0d (target %0d)", step, inc_exp << 1);
+        end
+
+        oct     = 2'd0;
+        glide_m = 1'b0;
+        run_frames(3);
+
+        //------------------------------------------------------------------
+        // 7. vibrato: vib_d = 0 must be a no-op, vib_d != 0 must move the
+        //    increment by roughly inc/1024 * d and stay bounded
+        //------------------------------------------------------------------
+        vib_m = 6'sd0;
+        run_frames(2);
+        p0 = dut.phase[0];
+        run_frames(1);
+        check_num("vibrato off (vib_d = 0) leaves the increment untouched",
+                  dut.phase[0] - p0, inc_exp);
+
+        begin : vib_check
+            reg [31:0] lo, hi, step;
+            reg [31:0] expect_pk;
+            integer    n;
+            lo = 32'hFFFF_FFFF;  hi = 32'd0;
+            // walk the modulation the way the LFO does: +DEPTH, 0, -DEPTH, 0
+            for (n = 0; n < 40; n = n + 1) begin
+                case (n % 4)
+                    0: vib_m = 6'sd0;
+                    1: vib_m = 6'sd18;
+                    2: vib_m = 6'sd0;
+                    default: vib_m = -6'sd18;
+                endcase
+                p0 = dut.phase[0];
+                run_frames(1);
+                step = dut.phase[0] - p0;
+                if (step < lo) lo = step;
+                if (step > hi) hi = step;
+            end
+            expect_pk = (inc_exp >> 10) * 32'd18;
+            check("vibrato swings the increment both ways",
+                  (hi > inc_exp) && (lo < inc_exp));
+            check("vibrato peak detune stays within +DEPTH Q10",
+                  (hi - inc_exp) <= expect_pk + (inc_exp >> 9));
+            check("vibrato trough detune stays within -DEPTH Q10",
+                  (inc_exp - lo) <= expect_pk + (inc_exp >> 9));
+            $display("      vib step range %0d .. %0d (carrier %0d, peak dev %0d)",
+                     lo, hi, inc_exp, expect_pk);
+        end
+        vib_m = 6'sd0;
+        run_frames(3);
 
         if (errors == 0)
             $display("== tb_osc_bank : ALL PASS ==");

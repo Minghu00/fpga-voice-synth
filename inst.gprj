@@ -18,6 +18,8 @@
         <File path="rtl/audio/i2s_tx.v" type="file.verilog" enable="1"/>
         <File path="rtl/audio/audio_out.v" type="file.verilog" enable="1"/>
         <File path="rtl/audio/test_mode.v" type="file.verilog" enable="1"/>
+        <File path="rtl/audio/vibrato_lfo.v" type="file.verilog" enable="1"/>
+        <File path="rtl/audio/fx_echo.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/lcd_timing.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/wave_buf.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/lcd_scope.v" type="file.verilog" enable="1"/>

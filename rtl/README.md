@@ -34,13 +34,15 @@
 | `inc_lut.v` | `inc_lut` | 25 音名（C4…C6，索引 0–24）→ 32 位相位增量（`inc = f × 2^32 / fs`），纯组合查找。溢出预算：`C6 ×4(谐波) = 0x1639E578 < 2^32`；再乘八度 ×4 就溢出，所以 `oct` 只允许 0..2 |
 | `wavetable_bank.v` | `wavetable_bank` | **4 张波表**（正弦/三角/锯齿/方波各 1024 点）合成一块 4096×16 BSRAM，`{tab_sel, addr}` 寻址，**读延迟 1 拍、单读端口**（所以 `osc_bank` 的槽流水线一行不用改）。`$readmemh` 读 `rtl/audio/wav_bank_4096.mem` |
 | `wav_bank_4096.mem` | — | 4096 行 × 16 位有符号：行 0–1023 正弦、1024–2047 三角、2048–3071 锯齿、3072–4095 方波。三张新表**带宽限到 8 次谐波**。行 0–1023 与旧 `sine_1024.mem` **逐行一致**。**路径写死在 `wavetable_bank.v` 的 `$readmemh`，移动文件只改那一行** |
-| `osc_bank.v` | `osc_bank` | 核心。`VOICES` 个声部 × `VOICES×NCOMP` 个独立相位累加器，时分复用一套 ROM + 乘法器；输出 `raw_flat`（每声部 16 位有符号，叠加了各分量）。相位存 BSRAM。`wave_mode=1` 时 `tab_nx = cidx`（分量 c 读表 c）+ 幅度四等分 |
+| `osc_bank.v` | `osc_bank` | 核心。`VOICES` 个声部 × `VOICES×NCOMP` 个独立相位累加器，时分复用一套 ROM + 乘法器；输出 `raw_flat`（每声部 16 位有符号，叠加了各分量）。相位存 BSRAM。`wave_mode=1` 时 `tab_nx = cidx`（分量 c 读表 c）+ 幅度四等分。**帧尾预计算段**（`fc` 1024..1279）里同时跑 `pinc→inc_org` 的滑音逼近、`tgt_inc<<oct` 的八度移位、以及颤音乘性调制；这些都在 8 个声部/帧的低占空比窗口内完成，不进音频主路径 |
 | `adsr.v` | `adsr` | 5 态包络（IDLE/ATT/DEC/SUS/REL）。`ATT_STEP/DEC_STEP/REL_STEP/SUSTAIN` 全是参数，换音色只改参数 |
 | `mixer16.v` | `mixer16` | `VOICES` 路求和 + ±32767 饱和。`MIX_SHIFT` 是统一右移（防溢出） |
 | `audio_out.v` | `audio_out` | 音量（13 位 Q8，128..4096 = 0.5×..16×，默认索引 6 = 4.0×）、静音、测试音（94 Hz −12 dBFS 方波，绕过合成器） |
 | `i2s_tx.v` | `i2s_tx` | 标准 I2S 串行器。16 位/槽，`BCLK_HALF=35` → BCLK 1.5429 MHz；帧长**精确** 2240 clk，与音频帧锁相。`load_tick` 捕获到 `shadow_l/shadow_r`，帧边界再装载 |
 | `test_mode.v` | `test_mode` | 现场测试模式。上电 1 ms 窗口内按住 Key_3 即锁存 `test_en`（粘性，断电退出）；锁存后强制 `gate=全 1`、`note_flat=NOTE_SET`（8 个隔 3 半音的音）、`timbre=0`（单分量纯正弦）、`oct=0`、`vol=2`（1.0×）。**选通结果必须在模块内打一拍再输出**，否则那级 mux 会串进 `note→inc_lut→<<oct` 最紧路径，Fmax 从 119.6 掉到 108.85 MHz |
 
+| `vibrato_lfo.v` | `vibrato_lfo` | 颤音 LFO。1024 点 Q10 正弦表（1 点 = 1 采样），相位增量 `INC=1740` → **4.998 Hz**。输出 `vib_d`（Q10，±1024）与 `d_abs`。全局共用一个实例（各声部同相，听感自然），由 `osc_bank` 在预计算段做**乘性**调制：`inc_org = inc_org * (1024 + (vib*DEPTH>>10)) >> 10`，`DEPTH=17` → ±17 cent |
+| `fx_echo.v` | `fx_echo` | **板内延迟**。8192×16 BSRAM（4 块）环形缓冲，`D=6000` 采样 → **124.4 ms**。反馈 `0.375`、湿声 `0.25`，回写前软限幅。反馈路径打了一拍（读 → 算 → 写跨两个时钟），否则这条环路会把 Fmax 拖到 100 MHz 以下。`TEST_LOOP=1` 时直通（写 = 读），给 TB 做逐拍比对 |
 ### `display/` —— 480×272 RGB 屏
 | 文件 | 模块 | 说明 |
 |---|---|---|

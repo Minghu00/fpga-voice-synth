@@ -71,6 +71,7 @@ module lcd_scope #(
     input  wire [3:0]           vol,            // audio_out gain index, for the status strip
     input  wire                 test_en,        // 1 = on-site self test is active
     input  wire                 wave_mode,      // 1 = 4-wavetable additive mode
+    input  wire [2:0]           fx,             // expression bank: b0 vib, b1 echo, b2 glide
 
     // panel
     output wire         lcd_dclk,
@@ -198,6 +199,7 @@ module lcd_scope #(
     reg               mode_q;
     reg               tst_q;            // test_en, pipelined with the geometry
     reg               wm_q;             // wave_mode, same pipeline stage
+    reg        [2:0]  fx_q;             // fx_mode, same pipeline stage
     reg        [9:0]  x_q, y_q;
     reg        [1:0]  oct_q, tim_q;
     reg        [3:0]  vol_q4;
@@ -264,6 +266,7 @@ module lcd_scope #(
             mode_q <= 1'b0;
             tst_q  <= 1'b0;
                 wm_q   <= 1'b0;
+            fx_q   <= 3'd0;
             x_q    <= 10'd0;   y_q   <= 10'd0;
             oct_q  <= 2'd0;    tim_q <= 2'd0;
             wlo_q  <= 16'sd0;  whi_q <= 16'sd0;
@@ -361,6 +364,7 @@ module lcd_scope #(
             mode_q <= latch_mode_w;
             tst_q  <= test_en;
                 wm_q   <= wave_mode;
+            fx_q   <= fx;
             oct_q  <= oct;
             tim_q  <= timbre;
             vol_q4 <= vol;
@@ -429,6 +433,7 @@ module lcd_scope #(
     wire        in_vol = (x_q >= 10'd96)  && (x_q < 10'd156);
     wire        in_tst = (x_q >= 10'd168) && (x_q < 10'd192);
     wire        in_wav = (x_q >= 10'd192) && (x_q < 10'd216);
+    wire        in_fx  = (x_q >= 10'd216) && (x_q < 10'd312);   // 8 blocks
 
     wire        oct_on = in_oct && (sblk <= {3'b0, oct_q});
     wire        tim_on = in_tim && ((sblk - 5'd4) <= {3'b0, tim_q});
@@ -439,6 +444,12 @@ module lcd_scope #(
 
     wire        tst_on  = tst_q && in_tst;   // TEST flag: solid red
     wire        wav_on  = wm_q  && in_wav;   // WAVE flag: solid orange
+
+    // expression/effect bank: 8 blocks, x 216..311, one per fx_mode value.
+    // Block 0 is always lit while fx_mode != 0 is NOT required -- the ladder
+    // shows fx_mode+1 blocks so that "off" still draws a single dim block and
+    // the player can tell the strip is alive.
+    wire        fx_on   = in_fx && ((sblk - 5'd18) <= {2'b0, fx_q});
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -485,6 +496,9 @@ module lcd_scope #(
                 end else if (wav_on) begin
                     // WAVE flag: solid orange = 4-wavetable additive mode
                     nr <= 5'd31; ng <= 6'd24; nb <= 5'd0;
+                end else if (fx_on) begin
+                    // expression bank ladder: cyan, one block per fx_mode step
+                    nr <= 5'd2;  ng <= 6'd46; nb <= 5'd31;
                 end
             end else begin
                 if (bar_hit) begin

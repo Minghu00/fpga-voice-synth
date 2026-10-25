@@ -15,8 +15,8 @@
 |---|---|---|---|
 | ~~`test_mode.v`~~ | ✅ **已实现**，已移入 `rtl/audio/test_mode.v` 并接入 `inst.gprj` | 评分③ | 已完成 |
 | ~~`wavetable_bank.v`~~ | ✅ **已实现**，已移入 `rtl/audio/wavetable_bank.v`（4 表合一 BSRAM）并接入 `inst.gprj` | 评分①（单波表只计 1 个振荡器） | 已完成 |
-| `vibrato_lfo.v` | 颤音 LFO（±N cent 正弦调制相位增量） | 拓展②（≥3 维表情） | 半天 |
-| `fx_echo.v` | 板内延迟/混响（BSRAM 环形缓冲） | 拓展②（FPGA 内部混响/延迟/合唱） | 1 天 |
+| ~~`vibrato_lfo.v`~~ | ✅ **已实现**，已移入 `rtl/audio/vibrato_lfo.v` 并接入 `inst.gprj`（颤音，5 Hz ±17 cent，长按 Key_2 的 fx 1/3/5/7 档）| 拓展②（≥3 维表情）| 已完成 |
+| ~~`fx_echo.v`~~ | ✅ **已实现**，已移入 `rtl/audio/fx_echo.v` 并接入 `inst.gprj`（8192×16 BSRAM，124.4 ms，fx 2/3/6/7 档）| 拓展②（板内延迟）| 已完成 |
 | `spectrum.v` | 实时频谱柱状图（8 点 DFT 或 8 带滤波器组） | 拓展③（实时频谱） | 1 天 |
 | `velocity_sense.v` | 力度检测接口 | 拓展②（力度） | 需硬件支持 |
 
