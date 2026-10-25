@@ -41,13 +41,14 @@
 | `i2s_tx.v` | `i2s_tx` | 标准 I2S 串行器。16 位/槽，`BCLK_HALF=35` → BCLK 1.5429 MHz；帧长**精确** 2240 clk，与音频帧锁相。`load_tick` 捕获到 `shadow_l/shadow_r`，帧边界再装载 |
 | `test_mode.v` | `test_mode` | 现场测试模式。上电 1 ms 窗口内按住 Key_3 即锁存 `test_en`（粘性，断电退出）；锁存后强制 `gate=全 1`、`note_flat=NOTE_SET`（8 个隔 3 半音的音）、`timbre=0`（单分量纯正弦）、`oct=0`、`vol=2`（1.0×）。**选通结果必须在模块内打一拍再输出**，否则那级 mux 会串进 `note→inc_lut→<<oct` 最紧路径，Fmax 从 119.6 掉到 108.85 MHz |
 
-| `vibrato_lfo.v` | `vibrato_lfo` | 颤音 LFO。24 位相位累加器 + 32 项四分之一正弦表（192 bit 纯 LUT，不占 BSRAM），相位增量 `PH_INC=1740` → **4.998 Hz**。输出 `vib_d`（Q10，±1024）与 `d_abs`。全局共用一个实例（各声部同相，听感自然），由 `osc_bank` 在预计算段做**乘性**调制：`inc_org = inc_org * (1024 + (vib*DEPTH>>10)) >> 10`，`DEPTH=18` → ±30 cent |
+| （颤音 LFO） | — | **已内联进 `rtl/top/top_inst.v`**。原来的独立模块 `vibrato_lfo.v` 因为输出 `vib_abs` 无人使用，被 Gowin 以 `swept in optimizing` 整个删掉（等于颤音在硬件上失效）；现在 LFO 直接写在顶层，并把 `vib_abs` 接到 `lcd_scope` 让 FX 阶梯随 LFO 呼吸，实例才不会被优化。24 位相位累加器 + 32 项四分之一正弦表（192 bit 纯 LUT），`PH_INC=1740` → **4.998 Hz**；`osc_bank` 在预计算段做**乘性**调制 `inc_org = inc_org * (1024 + (vib*DEPTH>>10)) >> 10`，`DEPTH=18` → ±30 cent。**教训：新模块的每个输出都必须有真实消费者，否则综合会删掉它，而告警只是轻描淡写的 NL0002。** |
 | `fx_echo.v` | `fx_echo` | **板内延迟**。8192×16 BSRAM（4 块）环形缓冲，`D=6000` 采样 → **124.4 ms**。反馈 `0.375`、湿声 `0.25`，回写前软限幅。反馈路径打了一拍（读 → 算 → 写跨两个时钟），否则这条环路会把 Fmax 拖到 100 MHz 以下。`TEST_LOOP=1` 时直通（写 = 读），给 TB 做逐拍比对 |
 ### `display/` —— 480×272 RGB 屏
 | 文件 | 模块 | 说明 |
 |---|---|---|
 | `lcd_timing.v` | `lcd_timing` | 同步产生器。`DIV=12` → 9 MHz 像素时钟；H 480+2+41+2=525、V 272+2+10+2=286 → 59.94 Hz。HS/VS 低有效，DE 高有效 |
 | `wave_buf.v` | `wave_buf` | 512×16 双口 BSRAM，存混音历史给示波器用（同地址读写返回旧值） |
+| `spectrum16.v` | `spectrum16` | **16 bin 实时频谱**。512 点三角窗 DFT，`94.174 Hz/bin`（k=1..16，跳过 DC），覆盖 94 Hz..1.507 kHz。2 块 sin/cos BSRAM + 2 个乘法器时分复用，一个采样 16 槽 × 3 拍 = 48 clk（预算 2240）。输出 4 bit × 16 电平；AGC 以本块峰值 bin 为 0 dB、每档 3 dB，低于峰值 45 dB 读 0。`$readmemh` 读 `rtl/display/spectrum_sin.mem`。三个必留坑见文件头 |
 | `lcd_scope.v` | `lcd_scope` | 全部画面。纵向分区（`localparam WAVE_Y0/Y1=28/164`、`ENV_Y0/Y1=164/232`、`STAT_Y0/Y1=232/240`、`BARS_Y0=240`）：`y0..27` 8 个触摸格、`y28..163` 波形示波器（**过零触发**，窗口起点每帧只锁一次）、`y164..231` 实心包络柱、`y232..239` 状态条、`y240..271` 8 根逐声部包络柱（每根 60 px）。状态条横分 16 块（`sblk=(x×2731)>>15`，每块 30 px）：`sblk 0..3` 八度梯、`4..7` 音色梯、`8..12` 音量梯、`14..15` **TEST 红块**；另外 `y<18 && x>463` 是锁存模式紫标记 |
 
 ### `legacy/` —— 历史版本（仍可综合，用于对照）

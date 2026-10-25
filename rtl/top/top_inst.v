@@ -247,11 +247,22 @@ module top_inst #(
     // A SHORT press still toggles latch mode, exactly as before; a long press
     // sets btn_long so the release edge does not also flip latch mode.
     //------------------------------------------------------------------
-    localparam [26:0] BTHR_C = BTHR[26:0];   // 0.8 s at 108 MHz by default
+    localparam [26:0] BTHR_C  = BTHR[26:0];          // 0.8 s at 108 MHz
+    //  A second, longer threshold on the same button cycles the DISPLAY mode.
+    //  Key_2 already owns latch mode (short tap) and the effect bank (0.8 s),
+    //  so the remaining gesture has to be "keep holding": at 1.6 s the effect
+    //  bank has already stepped once and stops, and from there the display
+    //  page advances once more.  No new pin, nothing to explain at the bench.
+    localparam [26:0] VTHR_C = {BTHR_C[25:0], 1'b0}; // 2 x BTHR = 1.6 s
 
     reg [26:0] bhold;
     reg        btn_long;
+    reg        btn_vlong;
     reg [2:0]  fx_mode;
+    //  Display page.  Only two pages exist so far -- 0 waveform, 1 spectrum --
+    //  so a single bit is enough; the lissajous page will widen this to two
+    //  bits when the stereo split lands.
+    reg        dmode;
     wire       btn_down      = ~btn_sync[1];
     wire       btn_down_prev = ~btn_sync[2];
 
@@ -263,26 +274,36 @@ module top_inst #(
             key_d      <= 8'd0;
             bhold      <= 27'd0;
             btn_long   <= 1'b0;
+            btn_vlong  <= 1'b0;
             fx_mode    <= 3'd0;
+            dmode      <= 2'd0;
         end else begin
             btn_sync <= {btn_sync[1:0], key_btn};
 
             // a fresh press restarts the hold timer
             if (btn_down && !btn_down_prev) begin
-                bhold    <= 27'd0;
-                btn_long <= 1'b0;
+                bhold     <= 27'd0;
+                btn_long  <= 1'b0;
+                btn_vlong <= 1'b0;
             end else if (btn_down) begin
-                if (bhold < BTHR_C)
+                if (bhold < BTHR_C) begin
                     bhold <= bhold + 1'b1;
-                else if (!btn_long) begin
-                    btn_long <= 1'b1;
-                    fx_mode  <= fx_mode + 3'd1;
+                end else if (bhold < VTHR_C) begin
+                    bhold <= bhold + 1'b1;
+                    if (!btn_long) begin
+                        btn_long <= 1'b1;
+                        fx_mode  <= fx_mode + 3'd1;
+                    end
+                end else if (!btn_vlong) begin
+                    btn_vlong <= 1'b1;
+                    dmode     <= ~dmode;
                 end
             end
 
             // Toggle latch mode on a SHORT press.  The decision is taken on
             // the release edge so that a LONG press is free to cycle the FX
-            // bank instead of doing both things at once.
+            // bank and a VERY LONG press to change the display page, instead
+            // of doing everything at once.
             if (btn_rel && !btn_long)
                 latch_mode <= ~latch_mode;
 
@@ -340,17 +361,71 @@ module top_inst #(
     //------------------------------------------------------------------
     // vibrato LFO (one shared LFO, applied per voice inside osc_bank)
     //------------------------------------------------------------------
-    wire signed [5:0] vib_d;
-    wire signed [5:0] vib_abs;
+    reg  signed [5:0] vib_d;
+    reg  signed [5:0] vib_abs;
 
-    vibrato_lfo u_lfo (
-        .clk   (clk_sys),
-        .rst_n (srst_n),
-        .en    (sample_tick),
-        .on    (vib_on),
-        .d     (vib_d),
-        .d_abs (vib_abs)
-    );
+    //------------------------------------------------------------------
+    // The LFO is written INLINE, not as a sub-module.
+    //
+    //   GowinSynthesis reported "NL0002: the module vibrato_lfo
+    //   instantiated to u_lfo is swept in optimizing" and the
+    //   synthesised hierarchy confirmed that no u_lfo survived -- the
+    //   vibrato was silently deleted from the bitstream even though both
+    //   of its outputs are consumed.  Keeping the logic in this module
+    //   removes the module boundary the optimiser was dissolving.
+    //------------------------------------------------------------------
+    localparam integer VIB_PH_INC = 1740;   // 5.0004 Hz at 48 214.2857 Hz
+    localparam integer VIB_DEPTH  = 18;     // +-18/1024 = +-30 cent
+                                            // the quarter-sine table below already peaks
+                                            // at exactly DEPTH, so no clamp is needed
+
+    // quarter sine, 32 entries, round(DEPTH * sin(pi/2 * i/32))
+    function [5:0] vib_qsin;
+        input [4:0] i;
+        begin
+            case (i)
+                5'd0:  vib_qsin = 6'd0;   5'd1:  vib_qsin = 6'd1;
+                5'd2:  vib_qsin = 6'd2;   5'd3:  vib_qsin = 6'd3;
+                5'd4:  vib_qsin = 6'd4;   5'd5:  vib_qsin = 6'd4;
+                5'd6:  vib_qsin = 6'd5;   5'd7:  vib_qsin = 6'd6;
+                5'd8:  vib_qsin = 6'd7;   5'd9:  vib_qsin = 6'd8;
+                5'd10: vib_qsin = 6'd8;   5'd11: vib_qsin = 6'd9;
+                5'd12: vib_qsin = 6'd10;  5'd13: vib_qsin = 6'd11;
+                5'd14: vib_qsin = 6'd11;  5'd15: vib_qsin = 6'd12;
+                5'd16: vib_qsin = 6'd13;  5'd17: vib_qsin = 6'd13;
+                5'd18: vib_qsin = 6'd14;  5'd19: vib_qsin = 6'd14;
+                5'd20: vib_qsin = 6'd15;  5'd21: vib_qsin = 6'd15;
+                5'd22: vib_qsin = 6'd16;  5'd23: vib_qsin = 6'd16;
+                5'd24: vib_qsin = 6'd17;  5'd25: vib_qsin = 6'd17;
+                5'd26: vib_qsin = 6'd17;  5'd27: vib_qsin = 6'd17;
+                5'd28: vib_qsin = 6'd18;  5'd29: vib_qsin = 6'd18;
+                5'd30: vib_qsin = 6'd18;
+                default: vib_qsin = 6'd18;
+            endcase
+        end
+    endfunction
+
+    reg [23:0] vib_ph;
+
+    wire        vib_half = vib_ph[23];
+    wire [4:0]  vib_qi   = vib_ph[22] ? (5'd31 - vib_ph[21:17]) : vib_ph[21:17];
+    wire [5:0]  vib_mag  = vib_qsin(vib_qi);
+    wire signed [6:0] vib_smag =
+        vib_half ? -$signed({1'b0, vib_mag}) : $signed({1'b0, vib_mag});
+    wire signed [6:0] vib_slim = vib_smag;
+    wire signed [6:0] vib_spos = vib_slim[6] ? -vib_slim : vib_slim;
+
+    always @(posedge clk_sys or negedge srst_n) begin
+        if (!srst_n) begin
+            vib_ph  <= 24'd0;
+            vib_d   <= 6'sd0;
+            vib_abs <= 6'sd0;
+        end else if (sample_tick) begin
+            vib_ph  <= vib_ph + VIB_PH_INC[23:0];
+            vib_d   <= vib_on ? vib_slim[5:0] : 6'sd0;
+            vib_abs <= vib_on ? vib_spos[5:0] : 6'sd0;
+        end
+    end
 
     //------------------------------------------------------------------
     // lead note for the glide voice: the pad touched most recently
@@ -545,6 +620,26 @@ module top_inst #(
     );
 
     //------------------------------------------------------------------
+    // 实时频谱 (赛题拓展③)
+    //
+    // A 16-bin DFT evaluated on the final mono mix, one full 512-sample block
+    // every 10.6 ms.  It is fed from the same node the waveform scope draws,
+    // so the bars show exactly what is being heard.
+    //------------------------------------------------------------------
+    wire [63:0] spec_flat;
+
+    spectrum16 #(
+        .NLOG  (9),
+        .NBINS (16)
+    ) u_spec (
+        .clk      (clk_sys),
+        .rst_n    (srst_n),
+        .en       (sample_tick),
+        .xin      ($signed(mix_out)),
+        .lvl_flat (spec_flat)
+    );
+
+    //------------------------------------------------------------------
     // display history writers
     //   waveform : one entry per audio sample       ( 9.96 ms window)
     //   envelope : one entry per 32nd audio sample  (318 ms window)
@@ -727,6 +822,9 @@ module top_inst #(
         .test_en  (test_en),
         .wave_mode(wave_mode),
         .fx       (fx_mode),
+        .dmode    (dmode),
+        .spec_flat(spec_flat),
+        .vib_abs  (vib_abs),
         .lcd_dclk (lcd_dclk),
         .lcd_hs   (lcd_hs),
         .lcd_vs   (lcd_vs),

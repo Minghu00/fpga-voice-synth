@@ -18,13 +18,14 @@
         <File path="rtl/audio/i2s_tx.v" type="file.verilog" enable="1"/>
         <File path="rtl/audio/audio_out.v" type="file.verilog" enable="1"/>
         <File path="rtl/audio/test_mode.v" type="file.verilog" enable="1"/>
-        <File path="rtl/audio/vibrato_lfo.v" type="file.verilog" enable="1"/>
-        <File path="rtl/audio/fx_echo.v" type="file.verilog" enable="1"/>
+            <File path="rtl/audio/fx_echo.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/lcd_timing.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/wave_buf.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/lcd_scope.v" type="file.verilog" enable="1"/>
+        <File path="rtl/display/spectrum16.v" type="file.verilog" enable="1"/>
         <File path="constraints/inst.cst" type="file.cst" enable="1"/>
         <File path="constraints/inst.sdc" type="file.sdc" enable="1"/>
         <File path="rtl/audio/wav_bank_4096.mem" type="file.other" enable="1"/>
+        <File path="rtl/display/spectrum_sin.mem" type="file.other" enable="1"/>
     </FileList>
 </Project>

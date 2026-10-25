@@ -7,7 +7,8 @@
 - 采样率 **48 214.2857 Hz**（108 MHz / 2240），全部整数关系，无小数时钟
 - 控制信号 → 音频输出延迟 **62.38 µs**（赛题要求 ≤10 ms，余量 160×）
 - 混音吞吐量 **32 × 48 214.29 = 1.54 M 振荡器·次/秒**
-- 综合实测 **0 告警**，Fmax **116.540 MHz**（约束 108 MHz，余量 7.9%；延迟线的
+- 综合实测 **0 告警**，Fmax **108.437 MHz**（约束 108 MHz，余量 0.4%；频谱模块是本工程最紧的一处，见
+   `docs/显示页证据.md` 第 5 节。延迟线的
   BSRAM 读写环靠三级 `en` 流水才从 108.3 抢回到 116.5）
 - 支持**现场测试模式**（上电时按住 Key_3）：8 个声部输出 8 个不同频率的纯正弦，
   频谱上 8 根互不重叠的谱峰 → `docs/测试模式证据.md`
@@ -39,7 +40,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_inst.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_all_sim.ps1
 ```
 
-十一个自检 testbench 全部 `ALL PASS` 才算通过。需要 iverilog 在
+十四个自检 testbench 全部 `ALL PASS` 才算通过。需要 iverilog 在
 `D:\Gowin\tools\iverilog\bin`。单跑某个平台用 `scripts\sim.ps1 tb_inst`。
 
 ## 目录

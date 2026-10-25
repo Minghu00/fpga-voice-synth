@@ -179,6 +179,9 @@ module tb_inst;
     wire env_cyan   = (lcd_r==5'd3)  && (lcd_g==6'd50) && (lcd_b==5'd30);
     wire env_fill   = (lcd_r==5'd1)  && (lcd_g==6'd16) && (lcd_b==5'd28);
     wire bar_head   = (lcd_r==5'd31) && (lcd_g==6'd52) && (lcd_b==5'd31);
+    //  spectrum page (dmode == 1): bar body and bar head colours
+    wire spec_body  = (lcd_r==5'd2)  && (lcd_g==6'd30) && (lcd_b==5'd20);
+    wire spec_head  = (lcd_r==5'd31) && (lcd_g==6'd52) && (lcd_b==5'd10);
 
     //----------------------------------------------------------------------
     // pixel / frame statistics, plus HS and VS period measurement
@@ -187,12 +190,16 @@ module tb_inst;
     reg     de_q = 1'b0;
 
     integer s_key = 0, s_wave = 0, s_envl = 0, s_envf = 0, s_bar = 0;
+    integer s_spec = 0, s_spec_head = 0;
     integer s_nwrows = 0, s_nkcells = 0, s_nbcells = 0;
     integer s_wrow0 = -1;   // row hit by the waveform at column 0 (trigger check)
     reg [135:0] s_wrows;          // waveform rows 28..163
     reg [7:0]   s_kcells, s_bcells;
+    reg [15:0]  s_specbars;       // spectrum page: which of the 16 bars are lit
 
     integer f_key = 0, f_wave = 0, f_envl = 0, f_envf = 0, f_bar = 0;
+    integer f_spec = 0, f_spec_head = 0;
+    reg [15:0] f_specbars;
     integer f_nwrows = 0, f_nkcells = 0, f_nbcells = 0;
     integer f_wrow0 = -1;
 
@@ -245,6 +252,7 @@ integer bi;
             s_key = 0; s_wave = 0; s_envl = 0; s_envf = 0; s_bar = 0;
             s_nwrows = 0; s_nkcells = 0; s_nbcells = 0; s_wrow0 = -1;
             s_wrows = 0; s_kcells = 0; s_bcells = 0;
+            s_spec = 0; s_spec_head = 0; s_specbars = 0;
             s_dbg_wave = 0; s_dbg_key = 0; s_dbg_env = 0; s_dbg_fill = 0; s_dbg_bar = 0;
             f_dbg_wave = 0; f_dbg_key = 0; f_dbg_env = 0; f_dbg_fill = 0; f_dbg_bar = 0;
             f_key = 0; f_wave = 0; f_envl = 0; f_envf = 0; f_bar = 0;
@@ -339,7 +347,13 @@ integer bi;
                                 end
                             end
                         end else if (row < 164) begin
-                            if (wave_green) begin
+                            if (spec_body || spec_head) begin
+                                s_spec = s_spec + 1;
+                                if (spec_head) begin
+                                    s_spec_head = s_spec_head + 1;
+                                    s_specbars[col/30] = 1'b1;
+                                end
+                            end else if (wave_green) begin
                                 s_wave = s_wave + 1;
                                 if (!s_wrows[row-28]) begin
                                     s_wrows[row-28] = 1'b1;
@@ -382,6 +396,8 @@ integer bi;
                     f_wrow0  = s_wrow0;
                     f_nkcells = s_nkcells;
                     f_nbcells = s_nbcells;
+                    f_spec = s_spec;    f_spec_head = s_spec_head;
+                    f_specbars = s_specbars;
                     f_dbg_wave = s_dbg_wave; f_dbg_key = s_dbg_key;
                     f_dbg_env = s_dbg_env;   f_dbg_fill = s_dbg_fill;
                     f_dbg_bar = s_dbg_bar;
@@ -390,6 +406,7 @@ integer bi;
                     s_key = 0; s_wave = 0; s_envl = 0; s_envf = 0; s_bar = 0;
                     s_nwrows = 0; s_nkcells = 0; s_nbcells = 0; s_wrow0 = -1;
                     s_wrows = 0; s_kcells = 0; s_bcells = 0;
+                    s_spec = 0; s_spec_head = 0; s_specbars = 0;
                     frame_no = frame_no + 1;
                 end
                 de_q = lcd_de;
@@ -814,6 +831,48 @@ integer bi;
             end
         end
         chk_num(dut.fx_mode, 3'd0, "FX bank wraps from 7 back to 0 (bypassed)");
+
+        //------------------------------------------------------------------
+        // display page: a VERY long Key_2 press (2 x BTHR = 80 clk here)
+        // besides stepping the FX bank, so the assertion below documents that
+        // coexistence rather than pretending it does not happen.
+        //------------------------------------------------------------------
+        chk(dut.dmode == 1'b0, "display page starts on the waveform");
+        key_btn = 1'b0;
+        repeat (130) @(posedge clk);          // well past 2 x BTHR
+        chk(dut.dmode == 1'b1,
+            "a very long Key_2 press switches to the spectrum page");
+        chk_num(dut.fx_mode, 3'd1,
+                "the same very long press also stepped the FX bank once");
+        key_btn = 1'b1;
+        repeat (60) @(posedge clk);
+
+        // NOTE: the position above left fx_mode = 1, i.e. the vibrato is ON, so
+        // the pitch wobbles inside the analysis block and the bars spread over
+        // several bins.  That is expected here -- tb_spec_cont proves the clean
+        // case (a steady continuous-phase tone peaks in one bar).
+        //
+        // with a note sounding the spectrum must draw something.  One 512-point
+        // block takes 512 samples (10.6 ms) and a frame is 16.7 ms, so give it
+        // three frames before looking.
+        keys = 16'h0001;
+        base = frame_no;
+        wait_frames(base + 3);
+        $display("      spectrum px = %0d  head px = %0d  bars = %b",
+                 f_spec, f_spec_head, f_specbars);
+        chk((f_spec > 500), "spectrum page draws bars while a note sounds");
+        chk((f_specbars != 16'd0), "at least one spectrum bar is lit");
+        keys = 16'h0000;
+        base = frame_no;
+        wait_frames(base + 2);
+
+        // and the next very long press goes back to the waveform
+        key_btn = 1'b0;
+        repeat (130) @(posedge clk);
+        chk(dut.dmode == 1'b0,
+            "a second very long press returns to the waveform page");
+        key_btn = 1'b1;
+        repeat (60) @(posedge clk);
 
         //------------------------------------------------------------------
         if (errors == 0)

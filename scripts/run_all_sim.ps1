@@ -13,8 +13,9 @@ $RTL = @(
  "rtl/audio/inc_lut.v","rtl/audio/wavetable_bank.v","rtl/audio/osc_bank.v",
  "rtl/audio/adsr.v","rtl/audio/mixer16.v","rtl/audio/i2s_tx.v","rtl/audio/audio_out.v",
  "rtl/audio/test_mode.v",
- "rtl/audio/vibrato_lfo.v","rtl/audio/fx_echo.v",
- "rtl/display/lcd_timing.v","rtl/display/wave_buf.v","rtl/display/lcd_scope.v"
+ "rtl/audio/fx_echo.v",
+ "rtl/display/lcd_timing.v","rtl/display/wave_buf.v","rtl/display/lcd_scope.v",
+ "rtl/display/spectrum16.v"
 )
 
 $suites = @(
@@ -26,8 +27,10 @@ $suites = @(
   @{ n="tb_wavetable"; f=@("rtl/audio/wavetable_bank.v","sim/tb_wavetable.v") },
   @{ n="tb_ttp229_rx"; f=@("rtl/input/ttp229_rx.v","sim/ttp229_model.v","sim/tb_ttp229_rx.v") },
   @{ n="tb_test_mode"; f=@("rtl/audio/test_mode.v","sim/tb_test_mode.v") },
-  @{ n="tb_vibrato_lfo"; f=@("rtl/audio/vibrato_lfo.v","sim/tb_vibrato_lfo.v") },
   @{ n="tb_fx_echo";   f=@("rtl/audio/fx_echo.v","sim/tb_fx_echo.v") },
+  @{ n="tb_spectrum16";f=@("rtl/display/spectrum16.v","sim/tb_spectrum16.v") },
+  @{ n="tb_spec_cont"; f=@("rtl/display/spectrum16.v","sim/tb_spec_cont.v") },
+  @{ n="tb_vib_path";  f=@("rtl/audio/inc_lut.v","rtl/audio/wavetable_bank.v","rtl/audio/osc_bank.v","sim/tb_vib_path.v") },
   @{ n="tb_inst";      f=($RTL + @("sim/pll_sys_sim.v","sim/ttp229_model.v","sim/tb_inst.v")) }
 )
 

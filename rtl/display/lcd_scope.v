@@ -72,6 +72,12 @@ module lcd_scope #(
     input  wire                 test_en,        // 1 = on-site self test is active
     input  wire                 wave_mode,      // 1 = 4-wavetable additive mode
     input  wire [2:0]           fx,             // expression bank: b0 vib, b1 echo, b2 glide
+    input  wire                 dmode,          // 0 = waveform, 1 = spectrum
+    input  wire [63:0]          spec_flat,      // 16 spectrum levels, 4 bits each
+    input  wire [5:0]           vib_abs,        // |vibrato detune|, 0 when off
+                                                //   -- also keeps the LFO out of the
+                                                //   optimiser's sweep list: an unused
+                                                //   output made Gowin delete u_lfo
 
     // panel
     output wire         lcd_dclk,
@@ -200,6 +206,10 @@ module lcd_scope #(
     reg               tst_q;            // test_en, pipelined with the geometry
     reg               wm_q;             // wave_mode, same pipeline stage
     reg        [2:0]  fx_q;             // fx_mode, same pipeline stage
+    reg               dm_q;             // display mode, same pipeline stage
+    reg        [5:0]  vab_q;            // |vibrato| in the same pipeline stage
+    reg        [3:0]  slvl_q;           // spectrum level of this 30 px column
+    reg        [9:0]  stop_q;           // top row of that bar
     reg        [9:0]  x_q, y_q;
     reg        [1:0]  oct_q, tim_q;
     reg        [3:0]  vol_q4;
@@ -365,6 +375,8 @@ module lcd_scope #(
             tst_q  <= test_en;
                 wm_q   <= wave_mode;
             fx_q   <= fx;
+            dm_q   <= dmode;
+        vab_q  <= vib_abs;
             oct_q  <= oct;
             tim_q  <= timbre;
             vol_q4 <= vol;
@@ -401,6 +413,8 @@ module lcd_scope #(
             //----------------------------------------------------------
             x_q <= x;
             y_q <= y;
+            slvl_q <= slvl_x;
+            stop_q <= stop_x;
         end
     end
 
@@ -434,6 +448,7 @@ module lcd_scope #(
     wire        in_tst = (x_q >= 10'd168) && (x_q < 10'd192);
     wire        in_wav = (x_q >= 10'd192) && (x_q < 10'd216);
     wire        in_fx  = (x_q >= 10'd216) && (x_q < 10'd312);   // 8 blocks
+    wire        in_dm  = (x_q >= 10'd320) && (x_q < 10'd368);   // 4 blocks
 
     wire        oct_on = in_oct && (sblk <= {3'b0, oct_q});
     wire        tim_on = in_tim && ((sblk - 5'd4) <= {3'b0, tim_q});
@@ -450,6 +465,35 @@ module lcd_scope #(
     // shows fx_mode+1 blocks so that "off" still draws a single dim block and
     // the player can tell the strip is alive.
     wire        fx_on   = in_fx && ((sblk - 5'd18) <= {2'b0, fx_q});
+    //  display page ladder: 4 blocks at x 320..367, (dmode+1) of them lit, so
+    //  page 0 (waveform) always shows one dim block and the strip looks alive.
+    wire        dm_on   = in_dm && ((sblk - 5'd26) <= {4'b0, dm_q});
+
+    //------------------------------------------------------------------
+    // spectrum bars (dmode == 1) -- the wave box becomes 16 bars, 30 px each
+    //
+    // x/30 by reciprocal: 65536/30 = 2184.5, so 2185.  The product stays
+    // inside 20 bits (479 * 2185 = 1.05e6 < 2^20) and the quotient is 0..15,
+    // exactly the bar index.
+    //
+    // Each bar grows UP from y = 163, 8 rows per level, so level 15 reaches
+    // y = 44 and level 0 draws nothing at all.
+    //------------------------------------------------------------------
+    //  TIMING.  The bar level used to be derived inside the colour stage:
+    //    DSP multiply -> 16:1 mux over spec_flat -> subtract -> compare -> pixel
+    //  which measured -0.30 ns of slack.  The level only changes every 30
+    //  pixels, so it is decoded one pipeline stage earlier (from the raw x,
+    //  in step with x_q) and the colour stage now compares two registers.
+    wire [19:0] m_bar_x = {10'b0, x} * 20'd2185;
+    wire [3:0]  sbar_x  = m_bar_x[19:16];
+    wire [3:0]  slvl_x  = spec_flat[sbar_x*4 +: 4];
+    wire [9:0]  stop_x  = 10'd164 - {1'b0, slvl_x, 3'b000};   // 164 - slvl*8
+
+    wire [3:0]  slvl  = slvl_q;
+    wire [9:0]  stop  = stop_q;
+    wire        sp_on = (dm_q == 1'b1) && (y_q >= 10'd28) && (y_q < 10'd164) &&
+                        (y_q >= stop);
+    wire        sp_cap = sp_on && (y_q < stop + 10'd2);
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -466,7 +510,18 @@ module lcd_scope #(
                     nr <= 5'd3;   ng <= 6'd6;   nb <= 5'd12;  // idle
                 end
             end else if (y_q < WAVE_Y1) begin
-                if (w_hit) begin
+                if (dm_q == 1'b1) begin
+                    // spectrum page: 16 live bars instead of the trace
+                    if (sp_on) begin
+                        if (sp_cap) begin
+                            nr <= 5'd31;  ng <= 6'd52;  nb <= 5'd10;  // bar head
+                        end else begin
+                            nr <= 5'd2;   ng <= 6'd30;  nb <= 5'd20;  // bar body
+                        end
+                    end else if (y_q == 10'd163) begin
+                        nr <= 5'd2;   ng <= 6'd16;  nb <= 5'd26;      // base line
+                    end
+                end else if (w_hit) begin
                     nr <= 5'd5;   ng <= 6'd58;  nb <= 5'd14;  // trace: green
                 end else if (y_q == 10'd95) begin
                     nr <= 5'd2;   ng <= 6'd16;  nb <= 5'd26;  // zero line
@@ -497,8 +552,13 @@ module lcd_scope #(
                     // WAVE flag: solid orange = 4-wavetable additive mode
                     nr <= 5'd31; ng <= 6'd24; nb <= 5'd0;
                 end else if (fx_on) begin
-                    // expression bank ladder: cyan, one block per fx_mode step
-                    nr <= 5'd2;  ng <= 6'd46; nb <= 5'd31;
+                    // expression bank ladder: cyan, one block per fx_mode step.
+                    // The green channel rides the LFO amplitude, so when FX=1 (vibrato)
+                    // the ladder breathes at 5 Hz -- a live expression indicator.
+                    nr <= 5'd2;  ng <= 6'd20 + {1'b0, vab_q[4:0]}; nb <= 5'd31;
+                end else if (dm_on) begin
+                    // display page ladder: soft violet
+                    nr <= 5'd18; ng <= 6'd8;  nb <= 5'd31;
                 end
             end else begin
                 if (bar_hit) begin
