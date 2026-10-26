@@ -28,6 +28,33 @@
 //     needs its own clock.  Collapsing the "table output updates" cycle and
 //     the "latch sv/cv" cycle captures the PREVIOUS bin's sine -- same smear.
 //
+//  ROTATING ACCUMULATOR ARRAY  (timing fix)
+//  ----------------------------------------
+//  The first version kept the 16 accumulators as ordinary arrays addressed by
+//  the bin counter:
+//
+//      re[bctr] <= re[bctr] + pS;          // 16:1 read mux + 32-bit add
+//      are_q <= |re[pctr]|;                // 16:1 read mux + negate
+//      lvl_flat[pctr*4 +: 4] <= lvl;       // 4-bit variable write, 16:1 decode
+//
+//  Synthesised as register arrays, every one of those accesses becomes a wide
+//  multiplexer fed by sixteen scattered flip-flop banks.  The 16:1 32-bit read
+//  mux alone measured about 9 ns of routing, and three paths came out within
+//  0.05 ns of the 9.26 ns clock period (Fmax 108.0 MHz with +0.013 ns slack).
+//
+//  The bins are always visited in order 0,1,2,..15 and then again 0,1,..15
+//  when publishing, so the array can simply ROTATE underneath the sweep: the
+//  bin being worked on is always slot 0, and after 16 steps everything is back
+//  where it started.
+//
+//      re_new = re[0] + pS;                    // read slot 0, no mux
+//      re[i] <= re[i+1] for i<15;              // pure neighbour wiring
+//      re[15] <= re_new;                       // fixed write slot, no decode
+//
+//  Publishing rotates the same way and shifts zeros in, which doubles as the
+//  accumulator clear at the end of a block -- the 4-bit variable write into
+//  lvl_flat[] is gone too, replaced by a shift register.
+//
 //  BIN MAP
 //  -------
 //  N = 512 at fs = 48214.2857 Hz  ->  94.174 Hz per bin.
@@ -62,7 +89,7 @@ module spectrum16 #(
     input  wire signed [15:0] xin,
 
     // 16 levels, 4 bits each, bin number k in [(k-1)*4 +: 4].
-    //  Registered; stable for a whole block (512 / 48214.2857 = 10.62 ms).
+    // Registered; stable for a whole block (512 / 48214.2857 = 10.62 ms).
     output reg  [4*NBINS-1:0] lvl_flat
 );
     localparam integer N      = 1 << NLOG;  // 512
@@ -89,11 +116,17 @@ module spectrum16 #(
     //  neighbour's frequency and a single tone lit the whole display.
 
     //------------------------------------------------------------------
-    // per-bin state
+    // rotating per-bin state.  Slot 0 is ALWAYS the bin being worked on,
+    // which is what removes every multiplexer from the accumulator path.
     //------------------------------------------------------------------
     reg  [8:0]        ph [0:NBINS-1];       // 0..N-1
     reg signed [31:0] re [0:NBINS-1];
     reg signed [31:0] im [0:NBINS-1];
+
+    //  Rotation strobes (rot_sw_c / rot_pb_c below) are COMBINATIONAL off the
+    //  sequencer state.  They used to be registered, which delayed the rotation
+    //  by one clock -- and by then bctr had already advanced, so ph_nx added
+    //  the NEXT bin's index and every bin accumulated its neighbour's k.
 
     //------------------------------------------------------------------
     // sequencer
@@ -104,27 +137,35 @@ module spectrum16 #(
     reg  [4:0] bctr;                        // bin slot while sweeping
     reg  [4:0] pctr;                        // bin slot while publishing
     reg        pphase;                      // 0 = find ref, 1 = write levels
-    reg  [4:0] msb_q [0:NBINS-1];           // per-bin msb of the finished block
+    //  publish scratch: msb per bin and the block peak
+    //  `msb_sh` is a SHIFT register (oldest bin at the top) instead of an
+    //  array indexed by pctr -- see the header.  msb_d is the registered copy
+    //  of the previous slot's msb so the `ref` compare only sees two flops.
+    reg  [5*NBINS-1:0] msb_sh;              // 16 x 5, bin 0 at [79:75]
+    reg  [4*NBINS-1:0] lvl_sh;              // 16 x 4, shifted out at the bottom
     reg  [4:0] ref;                         // msb of the loudest bin this block
-    //  TIMING.  `msb` is combinational from the accumulator storage, through a
-    //  32-bit add and a 32-bit priority encoder.  Comparing it against `ref`
-    //  in the same clock put that whole chain in series with the clock enable
-    //  of `ref`, which measured -7.6 ns of slack (Fmax 59 MHz).  `msb_d` is
-    //  the registered copy, so the compare only sees two flip-flops.
     reg  [4:0] msb_d;                       // msb of the previous publish slot
     reg  [31:0] are_q, aim_q;               // |Re|, |Im| registered
     reg  [31:0] mag_q;                      // |Re|+|Im|, registered
     reg  [1:0]  pcnt;                       // 0 abs, 1 add, 2 encode
     reg         ptail;                      // one extra cycle to fold in slot LASTB
-    wire [5:0] dd = {1'b0, ref} - {1'b0, msb_q[pctr]};   // 6 dB steps below ref
+    //  msb_sh[5*NBINS-1 -: 5] is the oldest entry, i.e. the bin being published
+    //  6 bits: `{1'b0, ref}` is 6 wide, and assigning that to a 5-bit net
+    //  truncates (EX3791) whenever ref has bit 5 set.  Keep the width.
+    wire [5:0] tt      = {1'b0, ref} - {1'b0, msb_sh[5*NBINS-1 -: 5]};  // 6 dB steps
     reg  [15:0] scnt;                       // samples in this block
     reg signed [15:0] xq;                   // sample being analysed
     reg signed [15:0] sv, cv;               // sin / cos of the current bin
     reg signed [31:0] pS, pC;               // the two products, pre-scaled
 
-    wire [8:0] p_k   = ph[bctr];
-    wire [8:0] p_cos = p_k + NQUART[8:0];
+    wire [8:0] p_k   = ph[0];
+    wire [8:0] p_cos = ph[0] + NQUART[8:0];
     wire [4:0] k1    = bctr + 5'd1;         // bin number k = slot + 1
+
+    //  the value that rotates into slot LASTB on a sweep rotation
+    wire signed [31:0] re_nx = re[0] + pS;
+    wire signed [31:0] im_nx = im[0] - pC;
+    wire        [8:0]  ph_nx = ph[0] + k1;
 
     //  Two shared multipliers.  They sample xq against the sin/cos latched on
     //  the previous clock, so the products are ready for the accumulate step.
@@ -174,12 +215,11 @@ module spectrum16 #(
     //  NOTE: the absolute value must span all 32 bits.  Taking only [24:0]
     //  silently truncated any bin louder than 2^25 and pinned it to one
     //  wrong level -- that bug made full scale and half scale both read 11.
-    wire signed [31:0] re_p = re[pctr];
-    wire signed [31:0] im_p = im[pctr];
+    //  Slot 0 only: the publish pass rotates the array instead of indexing it.
+    wire signed [31:0] re_p = re[0];
+    wire signed [31:0] im_p = im[0];
     wire        [31:0] a_re = re_p[31] ? (~re_p + 32'd1) : re_p;
     wire        [31:0] a_im = im_p[31] ? (~im_p + 32'd1) : im_p;
-    wire        [31:0] mag  = a_re + a_im;
-    wire        [4:0]  msb     = msb32(mag);      // combinational, kept for probes
     wire        [4:0]  msb_enc = msb32(mag_q);    // registered input -> short path
 
     //------------------------------------------------------------------
@@ -199,11 +239,45 @@ module spectrum16 #(
     // msb, the second turns those into levels.
     //------------------------------------------------------------------
     wire        [3:0]  lvl  = (ref < 5'd8)            ? 4'd0 :
-                              (dd >= 6'd8)            ? 4'd0 :
-                              (4'd15 - {dd[2:0], 1'b0});
+                              (tt  >= 6'd8)           ? 4'd0 :
+                              (4'd15 - {tt[2:0], 1'b0});
+
+    //  rotation strobes, both combinational off the sequencer state
+    wire rot_sw_c = run && (step == 3'd4);
+    wire rot_pb_c = pub && !pphase && !ptail && (pcnt == 2'd0);
+
+    //  lvl_sh is 16 x 4; each level enters at the TOP and the previous ones
+    //  slide down, so bin 0 ends up at [3:0] after sixteen steps, which is
+    //  exactly lvl_flat[3:0].  (Shifting `{lvl, lvl_sh[63:4]}` -- NOT
+    //  `{lvl, lvl_sh[59:0]}`, which throws away the entry just inserted.)
+    wire [4*NBINS-1:0] lvl_nx = {lvl, lvl_sh[4*NBINS-1:4]};
 
     integer b;
     always @(posedge clk) begin
+        //--------------------------------------------------------------
+        // the rotation itself.  Pure neighbour wiring: each stage reads the
+        // one above it and slot LASTB takes the freshly accumulated value.
+        // Nothing else in this block writes re[]/im[]/ph[], so the order of
+        // this and the sequencer below does not matter.
+        //--------------------------------------------------------------
+        if (rot_sw_c) begin
+            for (b = 0; b < NBINS-1; b = b + 1) begin
+                re[b] <= re[b+1];
+                im[b] <= im[b+1];
+                ph[b] <= ph[b+1];
+            end
+            re[NBINS-1] <= re_nx;
+            im[NBINS-1] <= im_nx;
+            ph[NBINS-1] <= ph_nx;
+        end else if (rot_pb_c) begin
+            for (b = 0; b < NBINS-1; b = b + 1) begin
+                re[b] <= re[b+1];
+                im[b] <= im[b+1];
+            end
+            re[NBINS-1] <= 32'sd0;
+            im[NBINS-1] <= 32'sd0;
+        end
+
         if (!rst_n) begin
             pub      <= 1'b0;
             run      <= 1'b0;
@@ -213,6 +287,8 @@ module spectrum16 #(
             pphase   <= 1'b0;
             ref      <= 5'd0;
             msb_d    <= 5'd0;
+            msb_sh   <= {(5*NBINS){1'b0}};
+            lvl_sh   <= {(4*NBINS){1'b0}};
             are_q    <= 32'd0;
             aim_q    <= 32'd0;
             mag_q    <= 32'd0;
@@ -232,15 +308,16 @@ module spectrum16 #(
             end
         end else if (pub) begin
             //----------------------------------------------------------
-            // publishing: two passes of 16 clocks
+            // publishing: two passes of 16 slots
             //   phase 0: record each bin's msb and find the block peak
             //   phase 1: turn (msb, ref) into the 4-bit bar level
             //----------------------------------------------------------
             if (!pphase) begin
-                //  TWO CYCLES PER SLOT.  Cycle 0 registers |Re|+|Im|; cycle 1
-                //  runs the priority encoder on that register.  Doing both in
-                //  one clock put storage -> abs -> add -> encoder -> CE of `ref`
-                //  in series and measured -4.25 ns (Fmax 74 MHz).
+                //  THREE CYCLES PER SLOT, and the accumulator array rotates
+                //  (shifting zeros in) instead of being indexed by pctr.
+                //  Cycle 0 registers |Re| and |Im| of slot 0 and rotates;
+                //  cycle 1 does the 32-bit sum; cycle 2 runs the priority
+                //  encoder on that register and shifts the msb into msb_sh.
                 if (ptail) begin
                     // fold in slot LASTB, whose msb is still in msb_d
                     if (msb_d > ref) ref <= msb_d;
@@ -248,34 +325,39 @@ module spectrum16 #(
                     pphase <= 1'b1;
                     pctr   <= 5'd0;
                 end else if (pcnt == 2'd0) begin
-                    // cycle 0: |Re| and |Im| (two conditional negates)
-                    are_q <= a_re;
-                    aim_q <= a_im;
-                    pcnt  <= 2'd1;
+                    // cycle 0: |Re| and |Im| of slot 0 (two conditional negates).
+                    // The rotation itself is driven by rot_pb_c above.
+                    are_q  <= a_re;
+                    aim_q  <= a_im;
+                    pcnt   <= 2'd1;
                 end else if (pcnt == 2'd1) begin
                     // cycle 1: the 32-bit sum
                     mag_q <= are_q + aim_q;
                     pcnt  <= 2'd2;
                 end else begin
-                    // cycle 2: priority encoder on a register
-                    pcnt        <= 2'd0;
-                    msb_q[pctr] <= msb_enc;
-                    msb_d       <= msb_enc;
+                    // cycle 2: priority encoder on a register, shift-in
+                    pcnt   <= 2'd0;
+                    msb_sh <= {msb_sh[5*NBINS-6:0], msb_enc};
+                    msb_d  <= msb_enc;
                     if (msb_d > ref) ref <= msb_d;
                     if (pctr == LASTB) ptail <= 1'b1;
                     else               pctr  <= pctr + 5'd1;
                 end
             end else begin
-                lvl_flat[pctr*4 +: 4] <= lvl;
-                re[pctr] <= 32'sd0;
-                im[pctr] <= 32'sd0;
+                //  ONE CYCLE PER SLOT.  msb_sh[5*NBINS-1 -: 5] is the current
+                //  bin's msb (oldest entry), so no multiplexer is involved.
+                lvl_sh <= lvl_nx;
+                msb_sh <= {msb_sh[5*NBINS-6:0], 5'd0};
                 if (pctr == LASTB) begin
-                    pub     <= 1'b0;
-                    pphase  <= 1'b0;
-                    ref     <= 5'd0;
-                    pctr    <= 5'd0;
-                    pcnt    <= 2'd0;
-                    ptail   <= 1'b0;
+                    lvl_flat <= lvl_nx;
+                    pub      <= 1'b0;
+                    pphase   <= 1'b0;
+                    ref      <= 5'd0;
+                    pctr     <= 5'd0;
+                    pcnt     <= 2'd0;
+                    ptail    <= 1'b0;
+                    lvl_sh   <= {(4*NBINS){1'b0}};
+                    msb_sh   <= {(5*NBINS){1'b0}};
                 end else begin
                     pctr <= pctr + 5'd1;
                 end
@@ -310,11 +392,8 @@ module spectrum16 #(
                 3'd3: begin                 // pS / pC are produced here
                     step <= 3'd4;
                 end
-                default: begin              // accumulate, advance, next bin
-                    re[bctr] <= re[bctr] + pS;
-                    im[bctr] <= im[bctr] - pC;
-                    ph[bctr] <= ph[bctr] + k1;
-                    step     <= 3'd0;
+                default: begin              // accumulate, rotate (rot_sw_c), advance
+                    step <= 3'd0;
                     if (bctr == LASTB) begin
                         bctr <= 5'd0;
                         run  <= 1'b0;

@@ -89,11 +89,28 @@ module mixer16 #(
 
     // Voice selection and the two 16-way muxes get their own clock, so the
     // multiplier never sees a mux in front of it.
+    //
+    //  TIMING.  The mux ADDRESS now gets its own cycle too.  Driving the mux
+    //  straight from fc[5:2] put the frame counter's decode in series with a
+    //  16:1 x 16-bit data mux, and that path measured 13.48 ns against a
+    //  9.26 ns period (+0.05 ns slack) because the eight source registers are
+    //  scattered across the die.  vm_q is a flop placed next to the mux, so
+    //  only the data fan-in is left in the cycle.  The phases therefore are:
+    //
+    //      ph 0 : vm_q / vok_q <= v                  (address only)
+    //      ph 1 : raw_q / env_q <= raw_flat[vm_q]    (data mux)
+    //      ph 2 : prod          <= raw_q * env_q     (18x18 DSP)
+    //      ph 3 : accum         <= accum + (prod>>>16)
+    //
+    //  The window is 4 clk per voice, so this still fits in the 64 clk mix
+    //  window; it simply uses the phase that used to be spare.
     reg  signed [15:0] raw_q;
     reg         [15:0] env_q;
+    reg         [3:0]  vm_q;
+    reg                vok_q;
 
-    wire signed [15:0] raw_x = raw_flat[vmux*16 +: 16];
-    wire        [15:0] env_x = env_flat[vmux*16 +: 16];
+    wire signed [15:0] raw_x = raw_flat[vm_q*16 +: 16];
+    wire        [15:0] env_x = env_flat[vm_q*16 +: 16];
 
     reg  signed [31:0] prod;
     reg  signed [22:0] accum;
@@ -145,30 +162,34 @@ module mixer16 #(
             out_r  <= 16'd0;
             raw_q  <= 16'sd0;
             env_q  <= 16'd0;
+            vm_q   <= 4'd0;
+            vok_q  <= 1'b0;
             last_q <= 1'b0;
             sum_q  <= 23'sd0;
             sum_l  <= 23'sd0;
             sum_r  <= 23'sd0;
         end else begin
             last_q <= 1'b0;
-            if (mix_ph && v_ok) begin
+            if (mix_ph) begin
                 case (ph)
                     2'd0: begin
+                        vm_q  <= vmux;
+                        vok_q <= v_ok;
+                    end
+                    2'd1: if (vok_q) begin
                         raw_q <= raw_x;
                         env_q <= env_x;
                     end
-                    2'd1: prod <= raw_q * $signed({1'b0, env_q});
-                    default: begin              // ph == 2 (and the spare cycle 3)
-                        if (ph == 2'd2) begin
-                            accum <= (v == 4'd0) ? vp : fin;
-                            acc_l <= (v == 4'd0) ? vp_l : fin_l;
-                            acc_r <= (v == 4'd0) ? vp_r : fin_r;
-                            if (v == v_last) begin
-                                sum_q <= (v == 4'd0) ? vp : fin;
-                                sum_l <= (v == 4'd0) ? vp_l : fin_l;
-                                sum_r <= (v == 4'd0) ? vp_r : fin_r;
-                                last_q <= 1'b1;     // -> out_ok
-                            end
+                    2'd2: if (vok_q) prod <= raw_q * $signed({1'b0, env_q});
+                    default: if (vok_q) begin     // ph == 3
+                        accum <= (v == 4'd0) ? vp : fin;
+                        acc_l <= (v == 4'd0) ? vp_l : fin_l;
+                        acc_r <= (v == 4'd0) ? vp_r : fin_r;
+                        if (v == v_last) begin
+                            sum_q <= (v == 4'd0) ? vp : fin;
+                            sum_l <= (v == 4'd0) ? vp_l : fin_l;
+                            sum_r <= (v == 4'd0) ? vp_r : fin_r;
+                            last_q <= 1'b1;     // -> out_ok
                         end
                     end
                 endcase
