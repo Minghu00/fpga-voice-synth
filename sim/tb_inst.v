@@ -814,13 +814,23 @@ integer bi;
         chk(dut.latch_mode == 1'b0,
             "a long Key_2 press does not toggle latch mode");
 
-        // keep stepping: 1 -> 2 (echo) -> 3 (echo + vibrato) -> ... -> 0
+        // keep stepping: 1 -> 2 (glide) -> 3 (echo) -> ... -> 0
         key_btn = 1'b0;
         repeat (60) @(posedge clk);
         key_btn = 1'b1;
         repeat (12) @(posedge clk);
         chk_num(dut.fx_mode, 3'd2, "second long press steps the FX bank to 2");
-        chk(dut.u_echo.on == 1'b1, "FX = 2 switches the echo line on");
+        chk(dut.glide_en == 1'b1, "FX = 2 selects the glide");
+        chk(dut.u_echo.on == 1'b0, "FX = 2 leaves the echo line off");
+
+        // 2 -> 3 selects the echo (fx_mode is a PRESET index, not a bit mask)
+        key_btn = 1'b0;
+        repeat (60) @(posedge clk);
+        key_btn = 1'b1;
+        repeat (12) @(posedge clk);
+        chk_num(dut.fx_mode, 3'd3, "third long press steps the FX bank to 3");
+        chk(dut.u_echo.on == 1'b1, "FX = 3 switches the echo line on");
+        chk(dut.glide_en == 1'b0, "FX = 3 leaves the glide off");
 
         // with the echo on the note must still sound, and the I2S word must
         // still be phase locked (din keeps toggling)
@@ -834,10 +844,10 @@ integer bi;
         base = frame_no;
         wait_frames(base + 2);
 
-        // step all the way round: 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 0
+        // step all the way round: 3 -> 4 -> 5 -> 6 -> 7 -> 0
         begin : fx_wrap
             integer st;
-            for (st = 0; st < 6; st = st + 1) begin
+            for (st = 0; st < 5; st = st + 1) begin
                 key_btn = 1'b0;
                 repeat (60) @(posedge clk);
                 key_btn = 1'b1;
@@ -845,6 +855,65 @@ integer bi;
             end
         end
         chk_num(dut.fx_mode, 3'd0, "FX bank wraps from 7 back to 0 (bypassed)");
+
+        //------------------------------------------------------------------
+        // reverb (4) and chorus (5) are presets 4 and 5, and 6/7 combine them
+        //------------------------------------------------------------------
+        begin : fx_rvb_cho
+            integer st;
+            for (st = 0; st < 4; st = st + 1) begin
+                key_btn = 1'b0;
+                repeat (60) @(posedge clk);
+                key_btn = 1'b1;
+                repeat (12) @(posedge clk);
+            end
+        end
+        chk_num(dut.fx_mode, 3'd4, "FX bank reaches preset 4 (reverb)");
+        chk(dut.rvb_on == 1'b1 && dut.u_echo.on == 1'b0 && dut.cho_on == 1'b0,
+            "FX = 4 selects the reverb alone");
+
+        key_btn = 1'b0;
+        repeat (60) @(posedge clk);
+        key_btn = 1'b1;
+        repeat (12) @(posedge clk);
+        chk_num(dut.fx_mode, 3'd5, "FX bank reaches preset 5 (chorus)");
+        chk(dut.cho_on == 1'b1 && dut.rvb_on == 1'b0,
+            "FX = 5 selects the chorus alone");
+
+        // the chorus must not stop the note: din keeps toggling
+        keys = 16'h0001;
+        base = frame_no;
+        din0 = din_edges;
+        wait_frames(base + 3);
+        chk((din_edges - din0) > 200,
+            "I2S din keeps toggling while the chorus is on");
+        keys = 16'h0000;
+        base = frame_no;
+        wait_frames(base + 2);
+
+        key_btn = 1'b0;
+        repeat (60) @(posedge clk);
+        key_btn = 1'b1;
+        repeat (12) @(posedge clk);
+        chk_num(dut.fx_mode, 3'd6, "FX bank reaches preset 6 (echo + reverb)");
+        chk(dut.u_echo.on == 1'b1 && dut.rvb_on == 1'b1 && dut.cho_on == 1'b0,
+            "FX = 6 selects echo plus reverb");
+
+        key_btn = 1'b0;
+        repeat (60) @(posedge clk);
+        key_btn = 1'b1;
+        repeat (12) @(posedge clk);
+        chk_num(dut.fx_mode, 3'd7, "FX bank reaches preset 7 (everything)");
+        chk(dut.u_echo.on == 1'b1 && dut.rvb_on == 1'b1 && dut.cho_on == 1'b1
+            && dut.vib_on == 1'b1 && dut.glide_en == 1'b1,
+            "FX = 7 turns every effect on");
+
+        // back to 0 so the display-page test below starts from a clean bank
+        key_btn = 1'b0;
+        repeat (60) @(posedge clk);
+        key_btn = 1'b1;
+        repeat (12) @(posedge clk);
+        chk_num(dut.fx_mode, 3'd0, "FX bank wraps back to 0 (bypassed)");
 
         //------------------------------------------------------------------
         // display page: a VERY long Key_2 press (2 x BTHR = 80 clk here)

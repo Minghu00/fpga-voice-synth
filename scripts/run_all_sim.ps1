@@ -28,6 +28,7 @@ $suites = @(
   @{ n="tb_ttp229_rx"; f=@("rtl/input/ttp229_rx.v","sim/ttp229_model.v","sim/tb_ttp229_rx.v") },
   @{ n="tb_test_mode"; f=@("rtl/audio/test_mode.v","sim/tb_test_mode.v") },
   @{ n="tb_fx_echo";   f=@("rtl/audio/fx_echo.v","sim/tb_fx_echo.v") },
+ @{ n="tb_fx_rvb_cho"; f=@("rtl/audio/fx_echo.v","sim/tb_fx_rvb_cho.v") },
   @{ n="tb_liss";     f=@("rtl/display/liss_render.v","sim/tb_liss.v") },
   @{ n="tb_spectrum16";f=@("rtl/display/spectrum16.v","sim/tb_spectrum16.v") },
   @{ n="tb_spec_cont"; f=@("rtl/display/spectrum16.v","sim/tb_spec_cont.v") },

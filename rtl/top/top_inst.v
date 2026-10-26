@@ -232,17 +232,22 @@ module top_inst #(
     wire [7:0] key_rise = gate_live & ~key_d;
 
     //------------------------------------------------------------------
-    // Key_2 long press (~0.8 s) cycles the expression/effect bank:
+    // Key_2 long press (~0.8 s) cycles the expression / effect bank.
     //
-    //      fx_mode   bit0 vibrato   bit1 echo   bit2 glide
-    //      0  off            -          -          -     <- default
-    //      1  vibrato        on         -          -
-    //      2  echo           -          on         -
-    //      3  vibrato+echo   on         on         -
-    //      4  glide          -          -          on
-    //      5  glide+vibrato  on         -          on
-    //      6  glide+echo     -          on         on
-    //      7  everything     on         on         on
+    //  fx_mode is a PRESET index, not a bit mask.  A bit mask would need one
+    //  bit per effect and the bank would be 32 steps long, which is unusable
+    //  at the bench; an index keeps it at 8 and still reaches every effect
+    //  on its own and the useful combinations.
+    //
+    //      fx_mode   vibrato   glide   echo   reverb   chorus
+    //      0  off        -       -       -       -        -     <- default
+    //      1  vibrato    on      -       -       -        -
+    //      2  glide      -       on      -       -        -
+    //      3  echo       -       -       on      -        -
+    //      4  reverb     -       -       -       on       -
+    //      5  chorus     -       -       -       -        on
+    //      6  echo+reverb-       -       on      on       -
+    //      7  everything on      on      on      on       on
     //
     // A SHORT press still toggles latch mode, exactly as before; a long press
     // sets btn_long so the release edge does not also flip latch mode.
@@ -346,15 +351,21 @@ module top_inst #(
     //             follows the most recently touched pad.  Every other voice
     //             keeps playing its own key, so a chord plus a gliding lead
     //             is possible.
+    //   glide   : voice 0 slews exponentially toward the newest key.
     //   vibrato : 5 Hz multiplicative LFO on every voice.
     //   echo    : one in-FPGA delay line after the mixer.
+    //   reverb  : four taps off the same delay line, summed.
+    //   chorus  : one LFO-modulated tap off the same delay line.
     //
-    // All three are OFF by default (fx_mode = 0), and with them off every
-    // signal takes exactly the same value as before this feature existed.
+    // fx_mode is a preset index -- see the table above the counter.  All of
+    // them are OFF at fx_mode = 0, and with them off every signal takes
+    // exactly the same value as before these features existed.
     //------------------------------------------------------------------
-    wire vib_on   = fx_mode[0];
-    wire echo_on  = fx_mode[1];
-    wire glide_en = fx_mode[2];
+    wire vib_on   = (fx_mode == 3'd1) || (fx_mode == 3'd7);
+    wire glide_en = (fx_mode == 3'd2) || (fx_mode == 3'd7);
+    wire echo_on  = (fx_mode == 3'd3) || (fx_mode == 3'd6) || (fx_mode == 3'd7);
+    wire rvb_on   = (fx_mode == 3'd4) || (fx_mode == 3'd6) || (fx_mode == 3'd7);
+    wire cho_on   = (fx_mode == 3'd5) || (fx_mode == 3'd7);
 
     //------------------------------------------------------------------
     // vibrato LFO (one shared LFO, applied per voice inside osc_bank)
@@ -550,25 +561,34 @@ wire [15:0] mix_r;
     // Sits between the mixer and the final stage.  It adds exactly two
     // sample periods of latency whether it is on or off, and it publishes
     // its own 'valid' pulse so that audio_out stays phase locked to i2s_tx.
-    // When echo_on = 0 the wet term is forced to zero, so the signal path is
-    // a pure 2-sample delay and the audible result is unchanged.
+    // When all three effects are off the wet terms are forced to zero, so the
+    // signal path is a pure constant delay and the audible result is unchanged.
     //------------------------------------------------------------------
     wire signed [15:0] echo_s;
     wire               echo_tick;
 
     fx_echo #(
         .DEPTH_LOG2 (13),        // 8192 samples = 169.9 ms of buffer
-        .DELAY      (6000),      // 124.4 ms
-        .FB_SH       (2),         // 0.375 feedback
-        .WET_SH      (2)          // 0.25 wet
+        .DELAY      (6000),      // echo   124.4 ms
+        .RV1        (1784),      // reverb  37.0 ms
+        .RV2        (2555),      // reverb  53.0 ms
+        .RV3        (3424),      // reverb  71.0 ms
+        .RV4        (4677),      // reverb  97.0 ms
+        .CH_D       (1024),      // chorus  21.2 ms centre, +-64 samples
+        .FB_SH      (2),         // 0.375 feedback
+        .WET_SH     (2),         // echo wet 0.25
+        .CH_WET_SH  (1),         // chorus wet 0.5
+        .CH_LFO_INC (209)        // 0.60 Hz sweep
     ) u_echo (
-        .clk   (clk_sys),
-        .rst_n (srst_n),
-        .en    (mix_ok),
-        .on    (echo_on),
-        .din   ($signed(mix_out)),
-        .dout  (echo_s),
-        .en_o  (echo_tick)
+        .clk    (clk_sys),
+        .rst_n  (srst_n),
+        .en     (mix_ok),
+        .on     (echo_on),
+        .rvb_on (rvb_on),
+        .cho_on (cho_on),
+        .din    ($signed(mix_out)),
+        .dout   (echo_s),
+        .en_o   (echo_tick)
     );
 
     //------------------------------------------------------------------

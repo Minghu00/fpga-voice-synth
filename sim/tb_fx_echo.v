@@ -1,13 +1,14 @@
 //=============================================================================
-// tb_fx_echo.v  --  self-checking test bench for fx_echo
+// tb_fx_echo.v  --  self-checking test bench for fx_echo (echo path)
 //
 //  The DUT is instantiated with a short ring (64 samples) and a 32-sample tap
 //  so the delay line can be walked through in a few hundred samples instead
-//  of 6000.
+//  of 6000.  Reverb and chorus are disabled here -- they have their own
+//  bench (tb_fx_rvb_cho.v).
 //
 //  Checks
 //    1. reset leaves the output silent
-//    2. the block has a fixed 2-sample latency, wet or dry
+//    2. the block has a fixed latency, wet or dry
 //    3. with on = 0 the output is an exact delayed copy of the input, so
 //       switching the effect off cannot change the I2S phase
 //    4. with on = 1, wet = 0.25 and feedback = 0 the impulse comes back
@@ -16,6 +17,11 @@
 //
 //  Every phase flushes the ring with silence first, so leftovers from the
 //  previous phase cannot masquerade as an echo of the current one.
+//
+//  Note on the gap: the tap sweep inside the DUT takes NTAP+2 = 8 clocks per
+//  sample.  On the board `en` fires once every 2240 clocks, so the sweep has
+//  280x headroom; the bench only has to leave at least 8 idle clocks between
+//  pushes for the sequencer to finish.
 //=============================================================================
 `timescale 1ns / 1ps
 
@@ -34,20 +40,28 @@ module tb_fx_echo;
 
     localparam integer DLY = 32;
     localparam integer DEP = 6;         // 64 samples of ring
+    localparam integer GAP = 10;        // idle clocks between pushes
 
     fx_echo #(
         .DEPTH_LOG2 (DEP),
         .DELAY      (DLY),
+        .RV1        (8),
+        .RV2        (16),
+        .RV3        (24),
+        .RV4        (48),
+        .CH_D       (32),
         .FB_ENABLE  (0),                // no feedback for the tap tests
-        .WET_SH      (2)                // 0.25
+        .WET_SH     (2)                 // 0.25
     ) dut (
-        .clk   (clk),
-        .rst_n (rst_n),
-        .en    (en),
-        .on    (on),
-        .din   (din),
-        .dout  (dout),
-        .en_o  (en_o)
+        .clk    (clk),
+        .rst_n  (rst_n),
+        .en     (en),
+        .on     (on),
+        .rvb_on (1'b0),
+        .cho_on (1'b0),
+        .din    (din),
+        .dout   (dout),
+        .en_o   (en_o)
     );
 
     always #5 clk = ~clk;
@@ -70,6 +84,7 @@ module tb_fx_echo;
 
     task push;
         input signed [15:0] v;
+        integer k;
         begin
             din <= v;
             @(posedge clk);
@@ -77,6 +92,7 @@ module tb_fx_echo;
             @(posedge clk);
             en  <= 1'b0;
             din <= 16'sd0;
+            for (k = 0; k < GAP; k = k + 1) @(posedge clk);
         end
     endtask
 
@@ -99,12 +115,11 @@ module tb_fx_echo;
     task arm;
         begin
             flush(DLY + 8);
-            repeat (4) @(posedge clk);
+            repeat (GAP + 4) @(posedge clk);
             capn = 0;
         end
     endtask
 
-    integer p;
     integer first_nonzero;
     integer badx;
 
@@ -122,19 +137,19 @@ module tb_fx_echo;
         repeat (4) @(posedge clk);
 
         //--------------------------------------------------------------
-        // 2/3. on = 0 : exact 2-sample delayed copy
+        // 2/3. on = 0 : exact delayed copy
         //--------------------------------------------------------------
         on = 1'b0;
         arm;
         // a staircase, so a wrong latency shows up immediately
         for (i = 0; i < 32; i = i + 1) push(i * 100);
-        repeat (8) @(posedge clk);
+        repeat (GAP + 4) @(posedge clk);
 
         check(capn >= 32, "dry path emits one sample per push");
         badx = 0;
         for (i = 0; i < 32; i = i + 1)
             if (cap[i] !== (i * 100)) badx = badx + 1;
-        check(badx == 0, "on=0: output is the input delayed by exactly 2 samples");
+        check(badx == 0, "on=0: dry path is a constant-delay copy of the input");
 
         //--------------------------------------------------------------
         // 4. on = 1, fb = 0 : single echo at DELAY, amplitude 1/4
@@ -143,7 +158,7 @@ module tb_fx_echo;
         arm;
         push(16'sd1000);                       // the impulse
         for (i = 0; i < (DLY + 8); i = i + 1) push(16'sd0);
-        repeat (8) @(posedge clk);
+        repeat (GAP + 4) @(posedge clk);
 
         first_nonzero = -1;
         for (i = 1; i < ((capn < 128) ? capn : 128); i = i + 1)
@@ -163,7 +178,7 @@ module tb_fx_echo;
             on = i[0];
             push(16'sd500);
         end
-        repeat (8) @(posedge clk);
+        repeat (GAP + 4) @(posedge clk);
         check(capn >= 16, "toggling on/off keeps exactly one output per input");
 
         $display("== tb_fx_echo : %0s (%0d errors) ==",
