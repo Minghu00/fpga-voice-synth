@@ -188,11 +188,20 @@ module fx_echo #(
     wire signed [15:0] echo_wet = on    ? (t0q >>> WET_SH)    : 16'sd0;
     wire signed [15:0] rvb_wet  = rvb_on ? rvb_s               : 16'sd0;
     wire signed [15:0] cho_wet  = cho_on ? (chq >>> CH_WET_SH) : 16'sd0;
-    wire signed [17:0] wet_sum  = {din_q[15], din_q} + {echo_wet[15], echo_wet}
-                                  + {rvb_wet[15], rvb_wet} + {cho_wet[15], cho_wet};
+    // NOTE -- do NOT write this as
+    //     {din_q[15], din_q} + {echo_wet[15], echo_wet} + ...
+    // A concatenation is ALWAYS UNSIGNED in Verilog, so {din_q[15], din_q}
+    // is a 17-bit UNSIGNED number: for a negative sample it becomes 131061
+    // and the sum saturates to +32767.  That produced a full-scale positive
+    // DC on the I2S line for every negative half cycle -- the amplifier then
+    // output a constant rail with the real signal only poking through on
+    // positive samples, which is heard as a rough tremble.
+    // Every operand below is declared SIGNED 16 bit; assigning into a signed
+    // 18-bit net makes Verilog sign-extend each of them.
+    wire signed [17:0] wet_sum = din_q + echo_wet + rvb_wet + cho_wet;
 
     // write-back sum built from registers only (din_d / fbg_new)
-    wire signed [17:0] wb_sum = {din_d[15], din_d} + {fbg_new[15], fbg_new};
+    wire signed [17:0] wb_sum = din_d + fbg_new;
 
     //------------------------------------------------------------------
     // BSRAM + tap sequencer.  No async reset on the memory: a BSRAM write

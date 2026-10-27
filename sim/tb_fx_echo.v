@@ -152,6 +152,42 @@ module tb_fx_echo;
         check(badx == 0, "on=0: dry path is a constant-delay copy of the input");
 
         //--------------------------------------------------------------
+        // 3b. NEGATIVE samples through the bypass path
+        //
+        //     This is the regression that was missing: every earlier vector
+        //     was positive, so a sign-extension bug in the output sum lived
+        //     undetected.  fx_echo built that sum as
+        //         {din_q[15], din_q} + ...
+        //     and a concatenation is ALWAYS UNSIGNED, so -100 became 65436,
+        //     the sum saturated to +32767, and the I2S line carried a
+        //     full-scale positive DC for the whole negative half of every
+        //     waveform.  On the board that is heard as a rough tremble.
+        //--------------------------------------------------------------
+        on = 1'b0;
+        arm;
+        for (i = 0; i < 32; i = i + 1) push(-(i * 100));
+        repeat (GAP + 4) @(posedge clk);
+
+        check(capn >= 32, "negative dry path emits one sample per push");
+        badx = 0;
+        for (i = 0; i < 32; i = i + 1)
+            if (cap[i] !== -(i * 100)) badx = badx + 1;
+        check(badx == 0, "on=0: negative samples pass through sign-correct");
+
+        on = 1'b1;
+        arm;
+        push(-16'sd1000);                      // negative impulse
+        for (i = 0; i < 32; i = i + 1) push(16'sd0);
+        repeat (GAP + 4) @(posedge clk);
+        check(cap[0] == -16'sd1000, "negative impulse keeps its sign (dry)");
+        badx = 0;
+        for (i = 1; i < 32; i = i + 1)
+            if (cap[i] > 0) badx = badx + 1;   // must not flip to +32767
+        check(badx == 0, "negative signal never flips onto the positive rail");
+        check(cap[DLY] == -16'sd250, "negative echo is wet-negative (1000 -> -250)");
+        on = 1'b0;
+
+        //--------------------------------------------------------------
         // 4. on = 1, fb = 0 : single echo at DELAY, amplitude 1/4
         //--------------------------------------------------------------
         on = 1'b1;
