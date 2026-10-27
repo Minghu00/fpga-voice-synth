@@ -142,7 +142,13 @@ module keymap8 #(
     end
 
     //------------------------------------------------------------------
-    // volume index, 6..10, wraps back to 6 after 10
+    // volume index, 2..10, wraps back to 2 after 10
+    //
+    //  It used to be 6..10, i.e. 4.0x..16x with no way down.  That is fine for
+    //  one note (8188 counts) but with latch mode the player stacks voices and
+    //  the sum ran into the limiter from five notes upwards (see the head room
+    //  table in docs/音量与削波记录.md).  Index 2 is 1.0x, where all eight
+    //  voices still fit without touching the knee.
     //------------------------------------------------------------------
     reg [3:0] vol_idx;
 
@@ -150,7 +156,7 @@ module keymap8 #(
         if (!rst_n)
             vol_idx <= 4'd6;           // +12 dB, see audio_out.v
         else if (v_press)
-            vol_idx <= (vol_idx >= 4'd10) ? 4'd6 : (vol_idx + 4'd1);
+            vol_idx <= (vol_idx >= 4'd10) ? 4'd2 : (vol_idx + 4'd1);
     end
 
     // SW3 position 5 adds one more step; clamp at the top of the table

@@ -4,18 +4,17 @@
 //
 //  Runs inside the 64 clk "mix" window of the audio frame (fc 1088..1151),
 //  four clocks per voice:
-//      ph 0 : raw_q / env_q  <= voice v            (mux only)
-//      ph 1 : prod           <= raw_q * env_q      (18x18 DSP)
-//      ph 2 : accum          <= accum + (prod>>>16)
-//                             at the last voice, latch the limited result
-//      ph 3 : spare
+//      ph 0 : vm_q / vok_q   <= voice v            (address only)
+//      ph 1 : raw_q / env_q  <= raw_flat[vm_q]     (data mux)
+//      ph 2 : prod           <= raw_q * env_q      (18x18 DSP)
+//      ph 3 : acc_e / acc_o  <= acc + (prod>>>16)  (split by voice parity)
 //
 //  Scaling
 //      raw : Q15 signed, +-32767 per voice (4 harmonics already sum-shifted)
 //      env : Q16 unsigned, 0 .. 65535  (65535 = 1.0)
 //      prod>>>16 : back to Q15
-//      accum : VOICES voices -> +-32767*VOICES  (23 bit is plenty)
-//      out = accum >>> MIX_SHIFT, then saturated to 16 bit
+//      acc : VOICES voices -> +-32767*VOICES  (23 bit is plenty)
+//      out = acc >>> MIX_SHIFT, then saturated to 16 bit
 //
 //  MIX_SHIFT is chosen by the caller so that all voices at full scale reach
 //  exactly full scale without clipping (扩展-③ spectrum test needs clean,
@@ -44,8 +43,16 @@
 //               bit-for-bit unchanged)
 //      out_l  : panned left
 //      out_r  : panned right
-//  `out` is kept as a separate accumulator rather than derived from L/R so
-//  that adding the stereo path cannot perturb the mono path at all.
+//
+//  TIMING.  Panning every voice put
+//      multiplier -> 13/16 shift/add -> pan select -> 23-bit accumulate
+//  in one 9.26 ns cycle and measured +0.017 ns of slack.  Instead the voices
+//  are split by parity *while accumulating* (even -> acc_e, odd -> acc_o) and
+//  the pan is applied once per frame to the two partial sums:
+//      out_l = sum_e + (13/16) * sum_o
+//      out_r = sum_o + (13/16) * sum_e
+//  mathematically identical, and the per-voice path is a single 23-bit add.
+//  `out` = (sum_e + sum_o) >>> MIX_SHIFT stays bit-for-bit the old mono mix.
 //-----------------------------------------------------------------------------
 //
 //  NOTE ON THE WINDOW: the window is 64 clk wide, i.e. 16 voice slots, so a
@@ -100,7 +107,7 @@ module mixer16 #(
     //      ph 0 : vm_q / vok_q <= v                  (address only)
     //      ph 1 : raw_q / env_q <= raw_flat[vm_q]    (data mux)
     //      ph 2 : prod          <= raw_q * env_q     (18x18 DSP)
-    //      ph 3 : accum         <= accum + (prod>>>16)
+    //      ph 3 : acc_e/acc_o   <= acc + (prod>>>16) (split by voice parity)
     //
     //  The window is 4 clk per voice, so this still fits in the 64 clk mix
     //  window; it simply uses the phase that used to be spare.
@@ -113,30 +120,36 @@ module mixer16 #(
     wire        [15:0] env_x = env_flat[vm_q*16 +: 16];
 
     reg  signed [31:0] prod;
-    reg  signed [22:0] accum;
 
     wire signed [31:0] prod_s = prod;
     wire signed [16:0] vp     = prod_s >>> 16;
-    wire signed [22:0] fin    = accum + vp;
 
-    // ---- panning taps ------------------------------------------------------
-    // 13/16 of vp, as a shift / add (no multiplier).  All operands are signed,
-    // so >>> is an arithmetic shift and the sign is preserved.
-    wire signed [16:0] vp_lo  = vp - (vp >>> 4) - (vp >>> 3);   // vp * 13/16
-    wire               pan_r = v[0];                            // odd voice -> right
-    wire signed [16:0] vp_l   = pan_r ? vp_lo : vp;
-    wire signed [16:0] vp_r   = pan_r ? vp    : vp_lo;
-
-    reg  signed [22:0] acc_l;
-    reg  signed [22:0] acc_r;
-    wire signed [22:0] fin_l = acc_l + vp_l;
-    wire signed [22:0] fin_r = acc_r + vp_r;
+    // ---- panning ----------------------------------------------------------
+    //  Voices are split by parity while they accumulate: even voices land in
+    //  acc_e, odd voices in acc_o.  Panning is then applied ONCE per frame to
+    //  the two partial sums instead of once per voice:
+    //      out_l = sum_e + (13/16) * sum_o
+    //      out_r = sum_o + (13/16) * sum_e
+    //  which is the same arithmetic as panning every voice, but the per-voice
+    //  path is now a single 23-bit add.  Doing it per voice put
+    //  "multiplier -> 13/16 shift/add -> pan select -> accumulate" in one
+    //  9.26 ns cycle and measured only +0.017 ns of slack.
+    reg  signed [22:0] acc_e;
+    reg  signed [22:0] acc_o;
+    wire signed [22:0] fin_e = acc_e + vp;
+    wire signed [22:0] fin_o = acc_o + vp;
 
     // latched on the last voice of the window, one clk after ph==2
     reg        last_q;
-    reg  signed [22:0] sum_q;
-    reg  signed [22:0] sum_l;
-    reg  signed [22:0] sum_r;
+    reg  signed [22:0] sum_e;
+    reg  signed [22:0] sum_o;
+
+    // 13/16 as a shift/add (no multiplier); >>> keeps the sign
+    wire signed [22:0] se13 = sum_e - (sum_e >>> 4) - (sum_e >>> 3);
+    wire signed [22:0] so13 = sum_o - (sum_o >>> 4) - (sum_o >>> 3);
+    wire signed [22:0] lsum = sum_e + so13;
+    wire signed [22:0] rsum = sum_o + se13;
+
     assign out_ok = last_q;
 
     function [15:0] sat16;
@@ -154,9 +167,6 @@ module mixer16 #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             prod   <= 32'sd0;
-            accum  <= 23'sd0;
-            acc_l  <= 23'sd0;
-            acc_r  <= 23'sd0;
             out    <= 16'd0;
             out_l  <= 16'd0;
             out_r  <= 16'd0;
@@ -165,9 +175,10 @@ module mixer16 #(
             vm_q   <= 4'd0;
             vok_q  <= 1'b0;
             last_q <= 1'b0;
-            sum_q  <= 23'sd0;
-            sum_l  <= 23'sd0;
-            sum_r  <= 23'sd0;
+            acc_e  <= 23'sd0;
+            acc_o  <= 23'sd0;
+            sum_e  <= 23'sd0;
+            sum_o  <= 23'sd0;
         end else begin
             last_q <= 1'b0;
             if (mix_ph) begin
@@ -182,22 +193,29 @@ module mixer16 #(
                     end
                     2'd2: if (vok_q) prod <= raw_q * $signed({1'b0, env_q});
                     default: if (vok_q) begin     // ph == 3
-                        accum <= (v == 4'd0) ? vp : fin;
-                        acc_l <= (v == 4'd0) ? vp_l : fin_l;
-                        acc_r <= (v == 4'd0) ? vp_r : fin_r;
-                        if (v == v_last) begin
-                            sum_q <= (v == 4'd0) ? vp : fin;
-                            sum_l <= (v == 4'd0) ? vp_l : fin_l;
-                            sum_r <= (v == 4'd0) ? vp_r : fin_r;
-                            last_q <= 1'b1;     // -> out_ok
+                        if (v == 4'd0) begin
+                            acc_e <= v[0] ? 23'sd0 : vp;
+                            acc_o <= v[0] ? vp : 23'sd0;
+                            sum_e <= v[0] ? 23'sd0 : vp;
+                            sum_o <= v[0] ? vp : 23'sd0;
+                        end else if (v[0]) begin
+                            acc_o <= fin_o;
+                            sum_o <= fin_o;
+                            sum_e <= acc_e;
+                        end else begin
+                            acc_e <= fin_e;
+                            sum_e <= fin_e;
+                            sum_o <= acc_o;
                         end
+                        if (v == v_last)
+                            last_q <= 1'b1;     // -> out_ok
                     end
                 endcase
             end
             if (last_q) begin
-                out   <= sat16(sum_q >>> MIX_SHIFT);
-                out_l <= sat16(sum_l >>> MIX_SHIFT);
-                out_r <= sat16(sum_r >>> MIX_SHIFT);
+                out   <= sat16((sum_e + sum_o) >>> MIX_SHIFT);
+                out_l <= sat16(lsum >>> MIX_SHIFT);
+                out_r <= sat16(rsum >>> MIX_SHIFT);
             end
         end
     end

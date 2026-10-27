@@ -147,10 +147,35 @@ module tb_audio_out;
         vol_raw = 4'd10;                     // 4096/256 = 16.0x (top step)
         repeat (4) @(negedge clk);
         push_mix(16'sd4095);
-        chk_num(sample, 16'sd32767, "gain 16x saturates at +32767, no wrap");
+        // soft knee: 4095*4096>>8 = 65520, above the 24576 knee, so
+        // 24576 + (65520-24576)/8 = 29694
+        chk_num(sample, 16'sd29694, "gain 16x is softly limited to 29694, no wrap");
 
         push_mix(-16'sd4095);
-        chk_num(sample, -32'sd32768, "gain 16x saturates at the negative rail");
+        chk_num(sample, -32'sd29694, "gain 16x limits symmetrically below");
+
+        //------------------------------------------------------------------
+        $display("");
+        $display("---- 2b. soft limiter: chords stay inside full scale ----");
+        //------------------------------------------------------------------
+        // mixer16 normalises eight voices to full scale, and this stage adds
+        // 4.0x on top.  A hard clip from the fifth voice upwards was audible
+        // as a rough tremble, so the knee sits at 0.75 FS and above it the
+        // curve bends to 1/8 slope instead of flattening.
+        vol_raw = 4'd6;
+        repeat (4) @(negedge clk);
+        push_mix(16'sd2047);                    // 1 voice
+        chk_num(sample, 16'sd8188, "1 voice is below the knee and untouched");
+        push_mix(16'sd4095);                    // 2 voices
+        chk_num(sample, 16'sd16380, "2 voices are below the knee and untouched");
+        push_mix(16'sd6143);                    // 3 voices
+        chk_num(sample, 16'sd24572, "3 voices are still below the knee");
+        push_mix(16'sd8191);                    // 4 voices, 32764 without the knee
+        chk((sample != 16'sh7FFF) && (sample > 16'sd24000),
+            "4 voices bend at the knee instead of clipping");
+        push_mix(16'sd16383);                   // 8 voices, 65532 without the knee
+        chk((sample != 16'sh7FFF) && (sample > 16'sd28000),
+            "8 voices stay below full scale (no hard clip)");
 
         //------------------------------------------------------------------
         $display("");

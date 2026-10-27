@@ -7,8 +7,8 @@
 - 采样率 **48 214.2857 Hz**（108 MHz / 2240），全部整数关系，无小数时钟
 - 控制信号 → 音频输出延迟 **62.38 µs**（赛题要求 ≤10 ms，余量 160×）
 - 混音吞吐量 **32 × 48 214.29 = 1.54 M 振荡器·次/秒**
-- 综合实测 **0 告警**，Fmax **109.755 MHz**（约束 108 MHz，setup slack **+0.148 ns**）。
-  当前最紧的一处是 `lcd_scope` 的颜色判定链（`y_q` 要穿四级串联比较才到 `nr`），
+- 综合实测 **0 告警**，Fmax **110.372 MHz**（约束 108 MHz，setup slack **+0.199 ns**）。
+  当前最紧的一处是 `spectrum16` 旋转阵列的移位（寄存器到寄存器、布线受限），
   完整分析见 `docs/Fmax加固记录.md`。
 - 支持**现场测试模式**（上电时按住 Key_3）：8 个声部输出 8 个不同频率的纯正弦，
   频谱上 8 根互不重叠的谱峰 → `docs/测试模式证据.md`
@@ -21,6 +21,9 @@
   `6` 延迟+混响 · `7` 全开。
   **延迟/混响/合唱共用同一条 8192×16 BSRAM 环，靠 6 路抽头时分复用区分**
   → `docs/滑音颤音延迟证据.md`
+- 音量键可下探到 **0 dB（1.0×）**，`audio_out` 带**软拐点限幅器**（3/4 满刻度起、斜率 1/8）：
+  锁存模式叠加多音时不再硬削成方波，也不会再出现 `|f1−f2|` 差拍那种"颤抖"
+  → `docs/音量与削波记录.md`
 
 ## 怎么用
 
@@ -44,7 +47,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_inst.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_all_sim.ps1
 ```
 
-十五个自检 testbench 全部 `ALL PASS` 才算通过。需要 iverilog 在
+十五个自检 testbench（`tb_mixer16`、`tb_audio_out`、`tb_fx_rvb_cho`…）全部 `ALL PASS` 才算通过。需要 iverilog 在
 `D:\Gowin\tools\iverilog\bin`。单跑某个平台用 `scripts\sim.ps1 tb_inst`。
 
 ## 目录

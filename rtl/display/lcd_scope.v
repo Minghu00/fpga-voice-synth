@@ -233,8 +233,14 @@ module lcd_scope #(
     reg  [15:0]       lyi_q;            // Lissajous span, pipelined with the geometry
     reg               lok_q;            // 1 = this column carries samples
     reg        [5:0]  vab_q;            // |vibrato| in the same pipeline stage
-    reg        [3:0]  slvl_q;           // spectrum level of this 30 px column
     reg        [9:0]  stop_q;           // top row of that bar
+    //  Bar tops pre-computed per level.  Doing "16:1 mux -> *4 -> subtract"
+    //  in one cycle off the (physically distant) DSP output needed 7 levels
+    //  and measured -0.071 ns at 108 MHz.  With the tops already stored the
+    //  path shrinks to "DSP -> 16:1 mux -> flop".
+    reg        [9:0]  stop_tab [0:15];
+    reg        [63:0] spec_d;           // previous spec_flat, for change detect
+    integer           sti;
     reg        [9:0]  x_q, y_q;
     reg        [1:0]  oct_q, tim_q;
     reg        [3:0]  vol_q4;
@@ -458,7 +464,6 @@ module lcd_scope #(
             //----------------------------------------------------------
             x_q <= x;
             y_q <= y;
-            slvl_q <= slvl_x;
             stop_q <= stop_x;
             //  Status-strip decode, registered here so stage 4 only has to AND
             //  flip-flop outputs together.  Left combinational it was the
@@ -505,8 +510,12 @@ module lcd_scope #(
     wire        oct_on = ioct_q && (sbk_q <= {3'b0, oct_q});
     wire        tim_on = itim_q && ((sbk_q - 5'd4) <= {3'b0, tim_q});
 
-    // volume ladder: 5 blocks, x 96..155, one per gain step 6..10
-    wire [3:0]  vol_lvl = (vol_q4 < 4'd6) ? 4'd0 : (vol_q4 - 4'd6);
+    // volume ladder: 5 blocks, x 96..155.  The gain index now runs 2..10
+    // (1.0x .. 16x), so nine steps have to be squeezed into five blocks:
+    //   2,3 -> 1 block   4,5 -> 2   6,7 -> 3   8,9 -> 4   10 -> 5
+    wire [4:0]  vsub    = {1'b0, vol_q4} - 5'd2;
+    wire [3:0]  vol_lvl = (vol_q4 < 4'd2)  ? 4'd0 :
+                          (vol_q4 >= 4'd10) ? 4'd4 : {2'b0, vsub[2:1]};
     wire        vol_on  = ivol_q && ((sbk_q - 5'd8) <= {1'b0, vol_lvl});
 
     wire        tst_on  = tst_q && itst_q;   // TEST flag: solid red
@@ -538,10 +547,25 @@ module lcd_scope #(
     //  in step with x_q) and the colour stage now compares two registers.
     wire [19:0] m_bar_x = {10'b0, x} * 20'd2185;
     wire [3:0]  sbar_x  = m_bar_x[19:16];
-    wire [3:0]  slvl_x  = spec_flat[sbar_x*4 +: 4];
-    wire [9:0]  stop_x  = 10'd164 - {1'b0, slvl_x, 3'b000};   // 164 - slvl*8
+    //  stop_tab holds 164 - level*8 for all 16 levels, refreshed whenever the
+    //  spectrum publishes.  The selector below is a plain 16:1 mux, so the DSP
+    //  output only has to cross two levels of LUT before reaching stop_q.
+    wire [9:0]  stop_x  = stop_tab[sbar_x];
 
-    wire [3:0]  slvl  = slvl_q;
+    //  refresh the bar-top table one clk after spec_flat moves
+    wire [63:0] spec_nx = spec_flat;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            spec_d <= 64'd0;
+            for (sti = 0; sti < 16; sti = sti + 1)
+                stop_tab[sti] <= 10'd164;
+        end else begin
+            spec_d <= spec_nx;
+            if (spec_nx != spec_d)
+                for (sti = 0; sti < 16; sti = sti + 1)
+                    stop_tab[sti] <= 10'd164 - {1'b0, spec_nx[sti*4 +: 4], 3'b000};
+        end
+    end
     wire [9:0]  stop  = stop_q;
     wire        sp_on = (dm_q == 2'd1) && (y_q >= 10'd28) && (y_q < 10'd164) &&
                         (y_q >= stop);

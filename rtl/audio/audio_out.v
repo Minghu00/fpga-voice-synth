@@ -141,6 +141,30 @@ module audio_out #(
 
     wire signed [29:0] prod_sh = prod >>> 8;
 
+    //------------------------------------------------------------------
+    // soft knee limiter
+    //
+    //  mixer16 normalises 8 voices to exactly full scale (MIX_SHIFT = 3), and
+    //  this stage then applies 0.5x .. 16x on top.  With the power-up default
+    //  of 4.0x the sum leaves the 16 bit range as soon as four voices are
+    //  sounding at once (measured: organ clips at N = 5, the square timbre
+    //  clips at N = 4).  Latch mode makes that easy to reach, and a hard
+    //  clip is what the ear hears as a rough tremble: flattening the peaks of
+    //  a chord generates difference tones between every pair of notes, and
+    //  those beat against the chord.
+    //
+    //  A 2-segment limiter keeps the transfer curve continuous:
+    //      |x| <= KNEE   ->  x
+    //      |x| >  KNEE   ->  KNEE + (|x| - KNEE) / 8
+    //  The slope steps 1 -> 1/8 instead of 1 -> 0, so far fewer sidebands are
+    //  produced, and the output is bounded: the largest input this stage can
+    //  ever see is 32767 * 4096 / 256 = 524272 ... in practice prod_sh for
+    //  eight full-scale voices at 16x is 16383 * 16 = 262128, which maps to
+    //  24576 + (262128-24576)/8 = 54240 -> still above 16 bit, so sat16()
+    //  stays as the final hard stop for that extreme case.
+    //------------------------------------------------------------------
+    localparam signed [29:0] KNEE = 30'sd24576;      // 0.75 of full scale
+
     function signed [15:0] sat16;
         input signed [29:0] x;
         begin
@@ -150,6 +174,20 @@ module audio_out #(
                 sat16 = 16'sh8000;
             else
                 sat16 = x[15:0];
+        end
+    endfunction
+
+    function signed [15:0] soft;
+        input signed [29:0] x;
+        reg   signed [29:0] ax;
+        reg   signed [29:0] y;
+        begin
+            ax = x[29] ? -x : x;                     // magnitude
+            if (ax <= KNEE)
+                y = ax;                              // y is a magnitude, the
+            else                                     // sign is restored below
+                y = KNEE + ((ax - KNEE) >>> 3);      // 1/8 slope above knee
+            soft = sat16(x[29] ? -y : y);
         end
     endfunction
 
@@ -189,7 +227,7 @@ module audio_out #(
                 else if (mute | mute_q[3])
                     sample <= 16'sd0;
                 else
-                    sample <= sat16(prod_sh);
+                    sample <= soft(prod_sh);
             end
         end
     end
