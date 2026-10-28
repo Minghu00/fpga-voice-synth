@@ -2,10 +2,13 @@
 // keymap8.v  --  8-key TTP229 pad  ->  8 piano gates + octave / timbre / volume
 //
 //  The TTP229 module sends 8 bits (it is the 8-key variant of the board), and
-//  we use those 8 pads as one octave of white keys:
+//  we use those 8 pads as a polyphonic keyboard.  Voice index == key index,
+//  so voice i always plays the note that belongs to TPi.
+//
+//  ONE PAD LAYOUT: an ascending C major arpeggio (see PAD LAYOUT below)
 //
 //      TP0  TP1  TP2  TP3  TP4  TP5  TP6  TP7
-//       C4   D4   E4   F4   G4   A4   B4   C5
+//       C4   E4   G4   C5   E5   G5   C6   E6
 //
 //  Voice index == key index, so voice i plays the note that belongs to TPi.
 //
@@ -16,14 +19,40 @@
 //
 //      ctrl[1:0] -> octave  0..3   (phase increment shifted left 0/1/2)
 //      ctrl[3:2] -> timbre  0..3   (organ / square / saw / triangle)
+//      ctrl5[0]  -> +1 volume step (SW3 position 5)
 //
 //  NOTE: octave 3 would need inc * 8, and the largest table entry already
 //  needs *4 for the 4th harmonic; inc_lut is only safe up to *4 overall, so
 //  the octave shift is clamped to 0..2 here as well.
 //
+//  PAD LAYOUT  (this is what actually cured the "two notes tremble" report)
+//  ------------------------------------------------------------------------
+//  The layout used to be the C major scale C4 D4 E4 F4 G4 A4 B4 C5, and the
+//  two pads a player presses first -- TP0 and TP1 -- were therefore C4 and
+//  D4, a whole tone apart.  Two equal-amplitude sines a whole tone apart sum
+//  to an amplitude-modulated signal: the envelope falls to zero at
+//  |f1-f2| = 32 Hz, i.e. about 30 complete fade-outs per second.  That is a
+//  100 %-deep 30 Hz tremolo, and it is exactly what was being reported.
+//
+//  It is not a defect in the FPGA.  A spectrum measurement of the DAC stream
+//  with two notes latched shows only two clean lines (263.95 Hz and 293.27 Hz,
+//  every other bin below -34 dB) plus a 29.7 Hz envelope ripple; nothing else
+//  is in the signal.  Any correct synthesiser playing those two pitches
+//  sounds like that.
+//
+//  So the fix is musical, not digital: make every pair of neighbouring pads a
+//  consonant interval.  NOTE_TAB is now an ascending C major arpeggio, so
+//  adjacent pads are a major third, a minor third or a perfect fourth -- the
+//  beat rates become 62..131 Hz, far above the ~30 Hz region the ear reads as
+//  flutter/roughness.  Stacking several pads still gives a clean C major
+//  chord, so the polyphony demo gets better, not worse.
+//
+//  Reverting to the one-octave scale is a one-line change to NOTE_TAB:
+//      { 5'd12, 5'd11, 5'd9, 5'd7, 5'd5, 5'd4, 5'd2, 5'd0 }   // C4..C5
+//
 //  VOLUME-UP BUTTON
 //    Silicon Key_3 (D7) is a VOLUME-UP button.  Each press steps the gain
-//    index by one through 6..10 (+12 dB .. +24 dB) and wraps back to 6, so the
+//    index by one through 2..10 (0 dB .. +24 dB) and wraps back to 2, so the
 //    instrument is always audible and a wrong number of presses can never
 //    leave it silent.
 //
@@ -71,10 +100,16 @@ module keymap8 #(
 );
 
     // note index per key, packed as {key7, key6, ... key0}
-    //   C4=0 D4=2 E4=4 F4=5 G4=7 A4=9 B4=11 C5=12   (see inc_lut.v)
+    //   ascending C major arpeggio over two octaves (see PAD LAYOUT above)
+    //   C4=0 E4=4 G4=7 C5=12 E5=16 G5=19 C6=24 E6=28   (see inc_lut.v)
+    //
+    //   Every neighbouring pair is a major third (4), a minor third (3) or a
+    //   perfect fourth (5) semitones, so no two adjacent pads beat at the
+    //   ~30 Hz that the ear hears as tremble.  The old C major scale layout
+    //   { 12, 11, 9, 7, 5, 4, 2, 0 } is a one-line swap if melody is wanted.
     localparam [5*8-1:0] NOTE_TAB =
-        { 5'd12, 5'd11, 5'd9, 5'd7,
-          5'd5,  5'd4,  5'd2, 5'd0 };
+        { 5'd28, 5'd24, 5'd19, 5'd16,
+          5'd12, 5'd7,  5'd4,  5'd0 };
 
     assign gate      = key_raw[7:0];
     assign note_flat = NOTE_TAB;

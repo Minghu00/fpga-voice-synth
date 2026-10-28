@@ -59,7 +59,9 @@
 //  -------
 //  N = 512 at fs = 48214.2857 Hz  ->  94.174 Hz per bin.
 //  Bin numbers k run 1..16 (k = 0 would be DC) so they cover 94 Hz .. 1.507 kHz,
-//  which brackets the range the keys can play (C4 = 261.6 Hz .. C6 = 1046 Hz).
+//  which brackets the range the keys can play.  The pad layout of keymap8.v is
+//  the C major arpeggio C4 E4 G4 C5 E5 G5 C6 E6, i.e. 261.6 Hz .. 1318.5 Hz;
+//  E6 lands on bin 14, so the top note still has two spare bins to its right.
 //  Storage slot b = k-1, so lvl_flat[b*4 +: 4] holds bin number k = b+1.
 //
 //  LEVEL
