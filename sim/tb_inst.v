@@ -52,7 +52,13 @@ module tb_inst;
         // 4 audio samples instead of 38 000 so the long-press wavetable
         // toggle can be exercised inside a fast simulation
         .WHOLD     (4),
-        .BTHR      (40)
+        .BTHR      (40),
+        // A latch tap is "reported for TAP_HOLD samples".  The real value is
+        // 965 samples (~20 ms), which is far longer than the 3 LCD frames
+        // (~12.5 ms) these tests hold a pad for, so shrink it to the minimum
+        // the rule allows.  The alternation immunity itself is covered by
+        // sim/tb_latch.v at the production value.
+        .TAP_HOLD  (8)
     ) dut (
         .clk27    (clk27),
         .rst_n    (rst_n),

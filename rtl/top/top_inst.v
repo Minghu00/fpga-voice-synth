@@ -54,7 +54,12 @@ module top_inst #(
     parameter integer WHOLD    = 38_000,
     // sys clocks a Key_2 press must be held to step the FX bank
     // (production 86 400 000 clocks ~ 0.80 s; the testbench lowers it)
-    parameter integer BTHR     = 86_400_000
+    parameter integer BTHR     = 86_400_000,
+    // audio samples a pad must be reported before latch mode treats it as a
+    // tap.  965 samples ~ 20 ms, three quarters of one 32 ms chip scan, which
+    // is what makes the rule immune to the chip's single-key alternation.
+    // (production 965; the testbench lowers it)
+    parameter integer TAP_HOLD = 965
 ) (
     input  wire clk27,
     input  wire rst_n,
@@ -226,6 +231,50 @@ module top_inst #(
     reg [7:0] key_d;                 // previous touch bitmap
     reg       latch_mode;
 
+    //------------------------------------------------------------------
+    // Robust tap detection for latch mode.
+    //
+    //  THE BUG THIS FIXES  ("two notes tremble")
+    //  -----------------------------------------
+    //  The chip is in its default single-key configuration, so with two
+    //  fingers down it reports ONE pad at a time and may alternate between
+    //  them on every 32 ms rescan.  The original rule
+    //
+    //        latch <= latch ^ key_rise;
+    //
+    //  therefore toggled a note on when its pad won the scan and straight
+    //  back off when the other pad won the next one.  Both latched notes
+    //  flipped on/off a few dozen times a second -- heard as a tremble, and
+    //  only when more than one finger was down.
+    //
+    //  A tap is now:  "this pad has been reported continuously for TAP_N
+    //  samples AND it has not already fired since every finger was lifted".
+    //  The per-pad `tap_done` block is cleared ONLY when key_raw returns to
+    //  zero, so an alternating chip can latch a pad once and then has no way
+    //  to toggle it again until the player lifts both fingers.  Net effect:
+    //  pressing two pads at once latches both, steadily.
+    //------------------------------------------------------------------
+    localparam [9:0] TAP_N = TAP_HOLD[9:0];  // ~20 ms at 48 214 Hz
+
+    reg [9:0] tap_cnt  [0:7];
+    reg [7:0] tap_done;                      // fired, waiting for all-up
+    reg [7:0] tap_fire;                      // combinational this-sample fire
+
+    integer tt;
+    always @(*) begin
+        for (tt = 0; tt < 8; tt = tt + 1)
+            tap_fire[tt] = gate_live[tt] && (tap_cnt[tt] == TAP_N - 10'd1)
+                           && !tap_done[tt];
+    end
+
+    reg [7:0] latch_nx;
+    always @(*) begin
+        latch_nx = latch;
+        for (tt = 0; tt < 8; tt = tt + 1)
+            if (tap_fire[tt])
+                latch_nx[tt] = ~latch[tt];
+    end
+
     reg [2:0] btn_sync;              // 2FF + 1 edge-detect stage
     wire      btn_rise = btn_sync[2] & ~btn_sync[1];   // press  (1 -> 0)
     wire      btn_rel  = ~btn_sync[2] & btn_sync[1];   // release(0 -> 1)
@@ -312,10 +361,26 @@ module top_inst #(
 
             if (sample_tick) begin
                 key_d <= gate_live;
-                if (!latch_mode)
-                    latch <= 8'd0;                 // leaving latch clears it
-                else if (key_rise != 8'd0)
-                    latch <= latch ^ key_rise;     // tap = toggle that note
+
+                // per-pad "reported this long" counter + one-shot block
+                for (tt = 0; tt < 8; tt = tt + 1) begin
+                    if (!gate_live[tt])
+                        tap_cnt[tt] <= 10'd0;
+                    else if (tap_cnt[tt] != TAP_N)
+                        tap_cnt[tt] <= tap_cnt[tt] + 10'd1;
+                end
+
+                if (gate_live == 8'd0)
+                    tap_done <= 8'd0;          // all fingers up -> re-arm
+                else
+                    tap_done <= tap_done | tap_fire;
+
+                if (!latch_mode) begin
+                    latch    <= 8'd0;          // leaving latch clears it
+                    tap_done <= 8'd0;
+                end else begin
+                    latch <= latch_nx;         // tap = toggle that note
+                end
             end
         end
     end

@@ -33,6 +33,7 @@ $suites = @(
   @{ n="tb_spectrum16";f=@("rtl/display/spectrum16.v","sim/tb_spectrum16.v") },
   @{ n="tb_spec_cont"; f=@("rtl/display/spectrum16.v","sim/tb_spec_cont.v") },
   @{ n="tb_vib_path";  f=@("rtl/audio/inc_lut.v","rtl/audio/wavetable_bank.v","rtl/audio/osc_bank.v","sim/tb_vib_path.v") },
+  @{ n="tb_latch";     f=($RTL + @("sim/pll_sys_sim.v","sim/tb_latch.v")) },
   @{ n="tb_inst";      f=($RTL + @("sim/pll_sys_sim.v","sim/ttp229_model.v","sim/tb_inst.v")) }
 )
 
