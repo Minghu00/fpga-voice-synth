@@ -4,22 +4,28 @@
 //  en is asserted for exactly one clock at the start of every audio sample
 //  (fs = 48 214.2857 Hz), so every *_STEP below is "env counts per sample".
 //
-//  Default steps give:
-//      attack  65535 / 340 = 193 samples =  4.0 ms
-//      decay   (65535-39321) / 2 = 13107 samples = 271.9 ms
-//      release 65535 / 6 = 10923 samples = 226.5 ms
-//      sustain level 39321 = 60 % of full scale
+//  Default steps give a plucked / struck envelope -- the note decays all the
+//  way to silence while the key is still held:
+//      attack  65535 / 340 =   193 samples =    4.0 ms
+//      decay   65535 /   1 = 65535 samples = 1359 ms   -> silence
+//      release 65535 /   6 = 10923 samples =  226.5 ms
+//      sustain level 0  (decay never parks on a plateau)
 //
-//  Steps are parameters so a preset (拨奏 / 钢琴 / 弦乐 / 管风琴) can be
-//  selected by passing different values, without touching this code.
+//  A non-zero SUSTAIN still works and parks the envelope on that plateau, so a
+//  拨奏 / 钢琴 / 弦乐 / 管风琴 preset can be selected by passing different
+//  values without touching this code.
+//
+//  Why the default is 0: two sustained pure tones modulate 100 % at |f1-f2|,
+//  which is heard as trembling.  With a decaying envelope the beating rides on
+//  a falling amplitude and reads as a struck chord instead.
 //=============================================================================
 `timescale 1ns / 1ps
 
 module adsr #(
     parameter [15:0] ATT_STEP = 16'd340,       // count/sample during attack
-    parameter [15:0] DEC_STEP = 16'd2,         // count/sample during decay
+    parameter [15:0] DEC_STEP = 16'd1,         // count/sample during decay
     parameter [15:0] REL_STEP = 16'd6,         // count/sample during release
-    parameter [15:0] SUSTAIN  = 16'd39321      // sustain level (60 %)
+    parameter [15:0] SUSTAIN  = 16'd0          // sustain level (0 = plucked)
 )(
     input  wire        clk,
     input  wire        rst_n,

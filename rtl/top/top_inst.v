@@ -42,10 +42,21 @@ module top_inst #(
     parameter integer SCL_HALF   = 108,
     parameter integer ACTIVE_LOW = 1,
     // envelope rates (production values; the testbench overrides them)
+    //
+    //  Plucked / struck shape: the note rises in 4 ms and then decays all the
+    //  way to silence even while the key is still held.  This is what makes a
+    //  two-note chord sound like an instrument instead of a test tone -- two
+    //  sustained pure tones always modulate 100 % at |f1-f2|, and no choice of
+    //  interval or level removes that.  Letting the amplitude fall turns the
+    //  beating into part of the decay, exactly as a real string or bar does.
+    //
+    //      attack  65535 / 340 = 193 samples =   4.0 ms
+    //      decay   65535 /   1 = 65535 samples = 1359 ms  -> silence
+    //      release 65535 /   6 = 10923 samples =  226 ms
     parameter integer ATT_STEP = 340,
-    parameter integer DEC_STEP = 2,
+    parameter integer DEC_STEP = 1,
     parameter integer REL_STEP = 6,
-    parameter integer SUSTAIN  = 39_321,
+    parameter integer SUSTAIN  = 0,
     // sys clocks per LCD pixel.  12 -> 9 MHz for the real panel; the
     // testbench lowers it so 272-line frames simulate quickly.
     parameter integer DIV      = 12,
@@ -393,6 +404,57 @@ module top_inst #(
                             : (latch_mode ? latch : gate_live);
 
     //------------------------------------------------------------------
+    //  Sticky gate for the envelope generators  (fixes "the chord shakes")
+    //
+    //  The TTP229 module ships in 8-key SINGLE-KEY mode: it can report only
+    //  ONE pad per scan.  With two fingers down it alternates which pad it
+    //  reports, roughly once per 32 ms scan, so `key_raw` -- and therefore
+    //  `gate` -- keeps flipping between the two.  Wired straight into the
+    //  ADSR that means voice A attacks while voice B releases, then the
+    //  other way round: the output is not a chord at all but two notes
+    //  chopping each other at ~30 Hz.  That irregular chatter is what
+    //  "the synthesised sound shakes" actually is.
+    //
+    //  It is not an audio-path defect: with a forced steady gate the DAC
+    //  stream is a clean sum of the two tones (FFT evidence in
+    //  docs/音量与削波记录.md sections 14-15).
+    //
+    //  Fix: hold each pad's gate on for REL_HOLD samples after it was last
+    //  reported.  Two pads alternating 32 ms apart therefore both stay on
+    //  and the chord sustains.  A real release still drops, REL_HOLD later
+    //  -- release is 226 ms anyway, so +80 ms is inaudible.  Attack latency
+    //  is untouched: a pad asserts on the very sample it is first reported,
+    //  so the 62 us control-to-sound figure still holds.
+    //
+    //  `gate` itself is left alone -- the display key cells and the latch
+    //  tap detector keep seeing the raw signal.
+    //------------------------------------------------------------------
+    localparam [11:0] REL_HOLD = 12'd3850;      // ~80 ms at 48214 Hz
+
+    reg [7:0]  g_s;
+    reg [11:0] rel_cnt [0:7];
+
+    integer rk;
+    always @(posedge clk_sys or negedge srst_n) begin
+        if (!srst_n) begin
+            g_s <= 8'd0;
+            for (rk = 0; rk < 8; rk = rk + 1)
+                rel_cnt[rk] <= 12'd0;
+        end else if (sample_tick) begin
+            for (rk = 0; rk < 8; rk = rk + 1) begin
+                if (gate[rk]) begin
+                    rel_cnt[rk] <= 12'd0;
+                    g_s[rk]     <= 1'b1;
+                end else if (rel_cnt[rk] != REL_HOLD) begin
+                    rel_cnt[rk] <= rel_cnt[rk] + 12'd1;
+                end else begin
+                    g_s[rk]     <= 1'b0;
+                end
+            end
+        end
+    end
+
+    //------------------------------------------------------------------
     // Wavetable mode: 4 different tables, one per additive component
     //
     // Toggled by a LONG press (~0.79 s) of Key_3 -- the same button that steps
@@ -548,7 +610,7 @@ module top_inst #(
     // voice 0 plays the lead note while gliding, and is gated on as long as
     // anything is held, so the slide is audible on its own.
     wire [39:0] note_g = glide_en ? {note_t[39:5], lead_note} : note_t;
-    wire [7:0]  gate_g = glide_en ? (gate | {7'd0, (|gate)}) : gate;
+    wire [7:0]  gate_g = glide_en ? (g_s | {7'd0, (|g_s)}) : g_s;
 
     //------------------------------------------------------------------
     // 32 oscillators (8 voices x 4 additive components)
