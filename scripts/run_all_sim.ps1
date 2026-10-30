@@ -14,7 +14,7 @@ $RTL = @(
  "rtl/audio/adsr.v","rtl/audio/mixer16.v","rtl/audio/i2s_tx.v","rtl/audio/audio_out.v",
  "rtl/audio/test_mode.v",
  "rtl/audio/fx_echo.v",
- "rtl/display/lcd_timing.v","rtl/display/wave_buf.v","rtl/display/lcd_scope.v",
+ "rtl/display/lcd_timing.v","rtl/display/wave_buf.v","rtl/display/wave_hist.v","rtl/display/lcd_scope.v",
  "rtl/display/spectrum16.v","rtl/display/liss_render.v"
 )
 

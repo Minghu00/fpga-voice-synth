@@ -731,19 +731,19 @@ wire [15:0] mix_r;
     //   waveform : one entry per audio sample       ( 9.96 ms window)
     //   envelope : one entry per 32nd audio sample  (318 ms window)
     //------------------------------------------------------------------
-    reg [8:0] wptr_w;
+    reg [9:0] wptr_w;
     reg [8:0] wptr_e;
     reg [4:0] ecnt;
     wire      env_wr = sample_tick && (ecnt == 5'd31);
 
     always @(posedge clk_sys) begin
         if (!srst_n) begin
-            wptr_w <= 9'd0;
+            wptr_w <= 10'd0;
             wptr_e <= 9'd0;
             ecnt   <= 5'd0;
         end else begin
             if (scope_tick) begin          // one step per displayed sample
-                wptr_w <= wptr_w + 9'd1;
+                wptr_w <= wptr_w + 10'd1;
                 ecnt   <= ecnt + 5'd1;
             end
             if (env_wr)
@@ -819,39 +819,48 @@ wire [15:0] mix_r;
     wire signed [15:0] scope_s   = mix_out;
     wire               scope_tick = mix_ok;
 
-    reg signed [15:0] mix_prev;
-
     //----------------------------------------------------------------------
     // Rising zero-crossing trigger
     //
     // The display window STARTS on a rising zero crossing, so a steady tone
     // always begins at the same phase and the picture stands still.
     //
-    // Start-triggering needs a crossing that is at least SPAN (=480) samples
-    // old, otherwise the right-hand columns would read samples that have not
-    // been written yet.  The history buffer is only 512 deep, so an address
-    // comparison `wptr - cz >= 480` WRAPS and silently rejects every crossing
-    // older than 511 samples -- for a 184-sample note that leaves a 32-sample
-    // window of opportunity, so 83 % of frames fell back to the free-running
-    // window and the trace jumped to a random phase.  Ages are therefore kept
-    // as counters, never as address differences, and the oldest crossing that
-    // is at least SPAN behind the pointer is used.  Any crossing gives the
-    // same picture, so switching between slots is invisible.
+    // TWO THINGS HAD TO CHANGE for that to be true:
+    //
+    //  1. The reference is VOICE 0's own oscillator, not the mix.  A sum of
+    //     two tones crosses zero at beat-dependent phases, so triggering on
+    //     the mix re-anchored the window to a different carrier phase every
+    //     frame -- the picture alternated between two differently-phased
+    //     sines.  Voice 0 free-runs its phase whether or not its pad is down,
+    //     so its crossings are perfectly periodic and give a rock-steady
+    //     reference while the displayed data is still the full mix.
+    //
+    //  2. The history is now 1024 deep (wave_hist.v).  Start-triggering needs
+    //     the crossing to be at least SPAN (=480) samples old, and it has to
+    //     still be inside the buffer, so the usable band is depth-SPAN:
+    //     32 samples at 512 deep (one legal frame in six) versus 544 at 1024.
+    //     Ages are kept as counters, never as address differences -- `wptr-cz`
+    //     wraps and silently rejects every valid crossing.
     //----------------------------------------------------------------------
     localparam integer SPAN = 480;
 
-    reg [8:0]  cz [0:3];             // crossing addresses, newest in cz[0]
-    reg [10:0] cz_age [0:2];         // age in samples; slot 3 is always >= 480
+    reg [9:0]  cz [0:3];             // crossing addresses, newest in cz[0]
+    reg [10:0] cz_age [0:2];         // age in samples, saturating
 
-    reg [8:0] tsel;
+    reg [9:0] tsel;
     reg       tok;
     integer   ci;
-    wire      xing = (scope_s > 16'sd0) && (mix_prev <= 16'sd0);
+    // Voice 0's sign bit: a 1->0 edge is a rising zero crossing of that
+    // oscillator.  Only one flop, and it cannot be disturbed by the envelope
+    // (an idle voice still advances its phase).
+    reg       v0_neg_q;
+    wire      v0_neg = raw_flat[15];
+    wire      xing   = v0_neg_q && !v0_neg;
     always @(*) begin
         tsel = cz[3];
-        tok  = 1'b1;
+        tok  = 1'b0;                 // no legal crossing -> free-run window
         for (ci = 2; ci >= 0; ci = ci - 1) begin
-            if ((cz_age[ci] >= SPAN[10:0]) && (cz_age[ci] < 11'd960)) begin
+            if ((cz_age[ci] >= SPAN[10:0]) && (cz_age[ci] <= 11'd1023)) begin
                 tsel = cz[ci];
                 tok  = 1'b1;
             end
@@ -860,25 +869,25 @@ wire [15:0] mix_r;
 
     always @(posedge clk_sys) begin
         if (!srst_n) begin
-            mix_prev <= 16'sd0;
-            cz[0] <= 9'd0; cz[1] <= 9'd0; cz[2] <= 9'd0; cz[3] <= 9'd0;
+            v0_neg_q <= 1'b0;
+            cz[0] <= 10'd0; cz[1] <= 10'd0; cz[2] <= 10'd0; cz[3] <= 10'd0;
             cz_age[0] <= 11'd200; cz_age[1] <= 11'd400; cz_age[2] <= 11'd600;
         end else if (scope_tick) begin
-            mix_prev <= scope_s;
+            v0_neg_q <= v0_neg;
             if (xing) begin
                 // scope_tick is also the write enable and wptr_w the address the
                 // sample lands on, so wptr_w names this newest stored sample.
                 cz[3] <= cz[2]; cz[2] <= cz[1]; cz[1] <= cz[0];
                 cz[0] <= wptr_w;
-                cz_age[2] <= (cz_age[1] > 11'd600) ? 11'd600 : cz_age[1];
-                cz_age[1] <= (cz_age[0] > 11'd600) ? 11'd600 : cz_age[0];
+                cz_age[2] <= (cz_age[1] > 11'd2047) ? 11'd2047 : cz_age[1];
+                cz_age[1] <= (cz_age[0] > 11'd2047) ? 11'd2047 : cz_age[0];
                 cz_age[0] <= 11'd0;
             end else begin
                 // saturate instead of wrapping: a wrapped age would look young
                 // again and hand the window an address that is not a crossing
-                if (cz_age[0] < 11'd600) cz_age[0] <= cz_age[0] + 11'd1;
-                if (cz_age[1] < 11'd600) cz_age[1] <= cz_age[1] + 11'd1;
-                if (cz_age[2] < 11'd600) cz_age[2] <= cz_age[2] + 11'd1;
+                if (cz_age[0] < 11'd2047) cz_age[0] <= cz_age[0] + 11'd1;
+                if (cz_age[1] < 11'd2047) cz_age[1] <= cz_age[1] + 11'd1;
+                if (cz_age[2] < 11'd2047) cz_age[2] <= cz_age[2] + 11'd1;
             end
         end
     end
@@ -906,7 +915,7 @@ wire [15:0] mix_r;
     wave_buf u_wb_liss (
         .clk       (clk_sys),
         .wr_en     (scope_tick),
-        .wr_addr   (wptr_w),
+        .wr_addr   (wptr_w[8:0]),
         .wr_data_l (mix_l),
         .wr_data_r (mix_r),
         .rd_addr   (liss_haddr),

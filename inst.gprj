@@ -21,6 +21,7 @@
             <File path="rtl/audio/fx_echo.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/lcd_timing.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/wave_buf.v" type="file.verilog" enable="1"/>
+        <File path="rtl/display/wave_hist.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/lcd_scope.v" type="file.verilog" enable="1"/>
         <File path="rtl/display/spectrum16.v" type="file.verilog" enable="1"/>
                 <File path="rtl/display/liss_render.v" type="file.verilog" enable="1"/>

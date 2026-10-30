@@ -599,12 +599,12 @@ integer bi;
         //------------------------------------------------------------------
         $display("      FRAME-A base_w=%0d mem=%0d prev=%0d", dut.u_lcd.base_w,
                  $signed(dut.u_lcd.u_buf_w.mem[dut.u_lcd.base_w]),
-                 $signed(dut.u_lcd.u_buf_w.mem[dut.u_lcd.base_w - 9'd1]));
+                 $signed(dut.u_lcd.u_buf_w.mem[dut.u_lcd.base_w - 10'd1]));
         wrow0_a = f_wrow0;
         base = frame_no;
         wait_frames(base + 2);        $display("      FRAME-B base_w=%0d mem=%0d prev=%0d", dut.u_lcd.base_w,
                  $signed(dut.u_lcd.u_buf_w.mem[dut.u_lcd.base_w]),
-                 $signed(dut.u_lcd.u_buf_w.mem[dut.u_lcd.base_w - 9'd1]));
+                 $signed(dut.u_lcd.u_buf_w.mem[dut.u_lcd.base_w - 10'd1]));
         wrow0_b = f_wrow0;
 
         $display("");

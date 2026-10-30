@@ -48,13 +48,16 @@ module lcd_scope #(
 
     // waveform history (one write per audio sample)
     input  wire         wr_en_w,
-    input  wire [8:0]   wr_addr_w,
+    input  wire [9:0]   wr_addr_w,
     input  wire [15:0]  wr_data_w,
 
     // waveform trigger: address of the most recent rising zero crossing.
     // Without it a steady tone scrolls across the screen (free-running
-    // scope); with it the picture stands still.
-    input  wire [8:0]   trig_addr,
+    // scope); with it the picture stands still.  The crossing has to be at
+    // least 480 samples old, so the addressing here is one bit wider than
+    // the 512-deep Lissajous buffer: 1024 deep leaves a 544-sample band of
+    // usable crossings instead of 32.
+    input  wire [9:0]   trig_addr,
     input  wire         trig_ok,
 
     // envelope history (one write every 32nd audio sample)
@@ -151,30 +154,30 @@ module lcd_scope #(
     //------------------------------------------------------------------
     // history RAMs
     //------------------------------------------------------------------
-    reg  [8:0]  base_w, base_e;
-    reg  [8:0]  ra_w, ra_e;
-    wire [15:0] rd_w, rd_e;
+    reg  [9:0]  base_w;
+    reg  [8:0]  base_e;
+    reg  [9:0]  ra_w;
+    reg  [8:0]  ra_e;
+    wire signed [15:0] rd_w;
+    wire [15:0] rd_e;
     reg  [15:0] dc_w, dc_e;      // current column
     reg  [15:0] dp_w, dp_e;      // previous column
     reg  [1:0]  sw;              // sample-fetch step: 0/1/2
 
-    // Both sums wrap inside the 512-entry buffer: base_* is (write pointer -
-    // 480) modulo 512, so base + x is only a valid address while x < 480.  A
-    // 9 bit sum gives that for free; a 10 bit one grows past the RAM and the
-    // extra bit makes the read return whatever was in the unwritten region.
-    wire [8:0] iw0 = base_w + x[8:0];
+    // The waveform history is 1024 deep, the envelope one still 512.  Both
+    // sums wrap inside their own buffer: base_* is (write pointer - 480) mod
+    // depth, so base + x is a valid address while x < 480.  The width has to
+    // match the depth exactly -- a wider sum would address the unwritten
+    // region and read back whatever happened to be there.
+    wire [9:0] iw0 = base_w + x[9:0];
     wire [8:0] ie0 = base_e + x[8:0];
 
-    // Window start for the frame that is about to be scanned.  The trigger
-    // address is the newest rising zero crossing, so the window ENDS there:
-    // wstart = trig_addr - 479.  Putting the crossing at the START (the usual
-    // X-Y scope look) is impossible here -- a tone's newest crossing is always
-    // within one period of "now", so start-triggering would need samples that
-    // have not been written yet and the right half of the screen would show
-    // stale data from the previous sweep (that is exactly what made the trace
-    // scroll by 6 rows per frame).  Ending the window on the crossing keeps
-    // every column inside already-written history.
-    wire [8:0] wstart = trig_ok ? trig_addr : (wr_addr_w - 9'd480);
+    // Window start for the frame that is about to be scanned.  This is a
+    // START trigger: the leftmost column is the crossing itself and the next
+    // 479 columns are the samples that follow it.  The crossing therefore has
+    // to be old enough for the whole window to have been written (>= 480),
+    // which is why the depth was raised to 1024 -- see wave_hist.v.
+    wire [9:0] wstart = trig_ok ? trig_addr : (wr_addr_w - 10'd480);
 
     // The envelope buffer is written once every ENV_DEC samples, so right after
     // reset it only holds a handful of points.  A fixed "now - 480" window
@@ -187,23 +190,22 @@ module lcd_scope #(
     // same edge that pix_start is seen, so reading the live iw0 a couple of
     // clocks into the fetch returns the NEXT column's address -- with a short
     // DIV (the testbench uses 3) both samples then come from the same place.
-    reg [8:0] cw_q, ce_q;
+    reg [9:0] cw_q;
+    reg [8:0] ce_q;
 
-    // The waveform buffer is stereo in the top level (the Lissajous page needs
-    // L and R of the same instant) but the scope itself only ever plots the
-    // mono mix, so the right channel is left open here.  The envelope buffer is
-    // genuinely mono -- its upper plane is tied off.
-    wire [15:0] rd_w_r_unused;
-
-    wave_buf u_buf_w (
-        .clk       (clk),
-        .wr_en     (wr_en_w),
-        .wr_addr   (wr_addr_w),
-        .wr_data_l (wr_data_w),
-        .wr_data_r (wr_data_w),
-        .rd_addr   (ra_w),
-        .rd_data_l (rd_w),
-        .rd_data_r (rd_w_r_unused)
+    // The waveform history is a dedicated 1024 x 16 block (see wave_hist.v).
+    // It used to share the stereo wave_buf with the Lissajous page, but that
+    // buffer is only 512 deep and a start-triggered 480-column window needs
+    // 480 + one note period of history -- 512 left a 32-sample trigger band,
+    // so most frames fell back to a free-running origin and the trace jumped.
+    // The Lissajous buffer stays in the top level, where L and R are needed.
+    wave_hist #(.AW(10)) u_buf_w (
+        .clk     (clk),
+        .wr_en   (wr_en_w),
+        .wr_addr (wr_addr_w),
+        .wr_data ($signed(wr_data_w)),
+        .rd_addr (ra_w),
+        .rd_data (rd_w)
     );
 
     wave_buf u_buf_e (
@@ -297,12 +299,12 @@ module lcd_scope #(
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            base_w <= 9'd0;  base_e <= 9'd0;
-            ra_w   <= 9'd0;  ra_e   <= 9'd0;
+            base_w <= 10'd0; base_e <= 9'd0;
+            ra_w   <= 10'd0; ra_e   <= 9'd0;
             dc_w   <= 16'd0; dc_e   <= 16'd0;
             dp_w   <= 16'd0; dp_e   <= 16'd0;
             sw     <= 2'd0;
-            cw_q   <= 9'd0;
+            cw_q   <= 10'd0;
             ce_q   <= 9'd0;
             yc_q   <= 16'sd0;  ycp_q <= 16'sd0;
             ye_q   <= 16'sd0;  yep_q <= 16'sd0;
@@ -376,7 +378,7 @@ module lcd_scope #(
 
             case (sw)
                 2'd0: begin
-                    ra_w <= cw_q - 9'd1;
+                    ra_w <= cw_q - 10'd1;
                     ra_e <= ce_q - 9'd1;
                     if (pix_start) sw <= 2'd1;
                 end
