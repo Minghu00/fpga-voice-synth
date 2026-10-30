@@ -58,7 +58,13 @@ module tb_inst;
         // (~12.5 ms) these tests hold a pad for, so shrink it to the minimum
         // the rule allows.  The alternation immunity itself is covered by
         // sim/tb_latch.v at the production value.
-        .TAP_HOLD  (8)
+        .TAP_HOLD  (8),
+        // The waveform page is a single-shot snapshot: it waits SETTLE audio
+        // samples after the set of pressed pads changes, then captures 480
+        // samples.  Production waits 300 ms; these tests only run a handful of
+        // LCD frames, so shrink it.  The freeze itself is covered by
+        // sim/tb_scope_snap.v.
+        .SETTLE    (40)
     ) dut (
         .clk27    (clk27),
         .rst_n    (rst_n),
@@ -376,13 +382,16 @@ integer bi;
                                 if (!s_wrows[row-28]) begin
                                     s_wrows[row-28] = 1'b1;
                                     s_nwrows = s_nwrows + 1;
-                                    // use the scope's own column counter: col
-                                    // here counts de-high pixels, and the first
-                                    // de pixel is not always scope column 0 (the
-                                    // pixel pipeline shifts it), so col==0 used to
-                                    // land on a random column of the trace.
-                                    if ((dut.u_lcd.px_q == 10'd0) && s_wrow0 < 0)
-                                        s_wrow0 = row;
+                                    // Remember the ROW of the very first trace
+                                    // pixel in the frame.  This used to key off
+                                    // scope column 0, but the trace at column 0
+                                    // also draws the vertical connector to the
+                                    // previous point, so "the first pixel of
+                                    // column 0" is not well defined.  The first
+                                    // pixel of the frame is: with the page now
+                                    // showing a frozen snapshot, consecutive
+                                    // frames must put it on the same row.
+                                    if (s_wrow0 < 0) s_wrow0 = row;
                                 end
                             end
                         end else if (row < 232) begin
@@ -611,8 +620,8 @@ integer bi;
         $display("---- scope window ----");
         $display("      trace row at column 0 : frame A = %0d  frame B = %0d",
                  wrow0_a, wrow0_b);
-        $display("      base_w=%0d trig_ok=%b wr_addr_w=%0d",
-                 dut.u_lcd.base_w, dut.u_lcd.trig_ok, dut.u_lcd.wr_addr_w);
+        $display("      base_w=%0d cap_run=%b cap_cnt=%0d",
+                 dut.u_lcd.base_w, dut.cap_run, dut.cap_cnt);
         // Both frames must draw a real trace near the middle of the box: a
         // window that reached past the write pointer would read zeros there.
         chk(wrow0_a > 28 && wrow0_a < 164 && wrow0_b > 28 && wrow0_b < 164,

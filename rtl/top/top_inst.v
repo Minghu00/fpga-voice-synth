@@ -59,7 +59,12 @@ module top_inst #(
     // tap.  965 samples ~ 20 ms, three quarters of one 32 ms chip scan, which
     // is what makes the rule immune to the chip's single-key alternation.
     // (production 965; the testbench lowers it)
-    parameter integer TAP_HOLD = 965
+    parameter integer TAP_HOLD = 965,
+    // audio samples between a change of pressed pads and the waveform-page
+    // snapshot.  14 460 samples = 300 ms, long enough for the attack and decay
+    // to settle so the captured window is the steady state rather than the
+    // transient.  (the testbench lowers it)
+    parameter integer SETTLE = 14_460
 ) (
     input  wire clk27,
     input  wire rst_n,
@@ -731,7 +736,7 @@ wire [15:0] mix_r;
     //   waveform : one entry per audio sample       ( 9.96 ms window)
     //   envelope : one entry per 32nd audio sample  (318 ms window)
     //------------------------------------------------------------------
-    reg [9:0] wptr_w;
+    reg [9:0] wptr_w;        // snapshot write address while capturing
     reg [8:0] wptr_e;
     reg [4:0] ecnt;
     wire      env_wr = sample_tick && (ecnt == 5'd31);
@@ -820,77 +825,80 @@ wire [15:0] mix_r;
     wire               scope_tick = mix_ok;
 
     //----------------------------------------------------------------------
-    // Rising zero-crossing trigger
+    // Waveform display: SINGLE-SHOT SNAPSHOT, not a scrolling trace
     //
-    // The display window STARTS on a rising zero crossing, so a steady tone
-    // always begins at the same phase and the picture stands still.
+    // Why a snapshot is the only thing that works here.  The display advances
+    // 804 samples per frame (48.214 kHz / 60 Hz) while the history buffer is
+    // 1024 deep, so any window that is anchored to the write pointer shows a
+    // different slice every frame.  Anchoring it to a trigger event does not
+    // help either: two tones are incommensurate, so the beat phase at a fixed
+    // carrier event drifts -- measured frame-to-frame MAD of 1500..2500 counts
+    // out of 32768, i.e. the trace visibly jumps.
     //
-    // TWO THINGS HAD TO CHANGE for that to be true:
+    // A window that IS frozen still decays, because the writer keeps
+    // overwriting the same addresses: a fixed base address only holds still
+    // for 1024/804 ~= 1.3 frames.
     //
-    //  1. The reference is VOICE 0's own oscillator, not the mix.  A sum of
-    //     two tones crosses zero at beat-dependent phases, so triggering on
-    //     the mix re-anchored the window to a different carrier phase every
-    //     frame -- the picture alternated between two differently-phased
-    //     sines.  Voice 0 free-runs its phase whether or not its pad is down,
-    //     so its crossings are perfectly periodic and give a rock-steady
-    //     reference while the displayed data is still the full mix.
-    //
-    //  2. The history is now 1024 deep (wave_hist.v).  Start-triggering needs
-    //     the crossing to be at least SPAN (=480) samples old, and it has to
-    //     still be inside the buffer, so the usable band is depth-SPAN:
-    //     32 samples at 512 deep (one legal frame in six) versus 544 at 1024.
-    //     Ages are kept as counters, never as address differences -- `wptr-cz`
-    //     wraps and silently rejects every valid crossing.
+    // So the waveform page gets its own buffer and captures ONCE:
+    //   * a capture is armed when the set of pressed pads changes
+    //   * it waits SETTLE samples for the envelope to settle
+    //   * it then stores 480 consecutive samples into the display buffer
+    //   * and holds them until the pads change again
+    // The picture is therefore absolutely still while a chord is held, and it
+    // re-arms the instant another pad is added or released -- exactly the
+    // "press TP0, press TP1, look" workflow.
     //----------------------------------------------------------------------
-    localparam integer SPAN = 480;
+    reg        cap_run;                   // burst capture in progress
+    reg [9:0]  cap_cnt;                   // capture / display address
+    reg [15:0] settle;                    // counts up after a pad change
+    reg        cap_arm;
+    reg [7:0]  gate_q;
+    reg        cap_go;                    // one-shot: start the burst
 
-    reg [9:0]  cz [0:3];             // crossing addresses, newest in cz[0]
-    reg [10:0] cz_age [0:2];         // age in samples, saturating
+    wire gate_chg = (gate != gate_q);
 
-    reg [9:0] tsel;
-    reg       tok;
-    integer   ci;
-    // Voice 0's sign bit: a 1->0 edge is a rising zero crossing of that
-    // oscillator.  Only one flop, and it cannot be disturbed by the envelope
-    // (an idle voice still advances its phase).
-    reg       v0_neg_q;
-    wire      v0_neg = raw_flat[15];
-    wire      xing   = v0_neg_q && !v0_neg;
-    always @(*) begin
-        tsel = cz[3];
-        tok  = 1'b0;                 // no legal crossing -> free-run window
-        for (ci = 2; ci >= 0; ci = ci - 1) begin
-            if ((cz_age[ci] >= SPAN[10:0]) && (cz_age[ci] <= 11'd1023)) begin
-                tsel = cz[ci];
-                tok  = 1'b1;
-            end
-        end
-    end
-
+    // Arm / settle timer.  Runs on the audio sample tick.
     always @(posedge clk_sys) begin
         if (!srst_n) begin
-            v0_neg_q <= 1'b0;
-            cz[0] <= 10'd0; cz[1] <= 10'd0; cz[2] <= 10'd0; cz[3] <= 10'd0;
-            cz_age[0] <= 11'd200; cz_age[1] <= 11'd400; cz_age[2] <= 11'd600;
-        end else if (scope_tick) begin
-            v0_neg_q <= v0_neg;
-            if (xing) begin
-                // scope_tick is also the write enable and wptr_w the address the
-                // sample lands on, so wptr_w names this newest stored sample.
-                cz[3] <= cz[2]; cz[2] <= cz[1]; cz[1] <= cz[0];
-                cz[0] <= wptr_w;
-                cz_age[2] <= (cz_age[1] > 11'd2047) ? 11'd2047 : cz_age[1];
-                cz_age[1] <= (cz_age[0] > 11'd2047) ? 11'd2047 : cz_age[0];
-                cz_age[0] <= 11'd0;
-            end else begin
-                // saturate instead of wrapping: a wrapped age would look young
-                // again and hand the window an address that is not a crossing
-                if (cz_age[0] < 11'd2047) cz_age[0] <= cz_age[0] + 11'd1;
-                if (cz_age[1] < 11'd2047) cz_age[1] <= cz_age[1] + 11'd1;
-                if (cz_age[2] < 11'd2047) cz_age[2] <= cz_age[2] + 11'd1;
+            settle  <= 16'd0;
+            cap_arm <= 1'b1;
+            cap_go  <= 1'b0;
+            gate_q  <= 8'd0;
+        end else if (sample_tick) begin
+            cap_go <= 1'b0;
+            gate_q <= gate;
+            if (gate_chg) begin
+                settle  <= 16'd0;         // pads changed -> re-arm
+                cap_arm <= 1'b1;
+            end else if (cap_arm && !cap_run) begin
+                if (settle != SETTLE[15:0]) settle <= settle + 16'd1;
+                else begin
+                    cap_arm <= 1'b0;
+                    cap_go  <= 1'b1;      // single-cycle start request
+                end
             end
         end
     end
+
+    // Burst engine.  Consumes one sample per scope_tick (the same tick that
+    // enables the write), storing 480 consecutive samples and then holding.
+    always @(posedge clk_sys) begin
+        if (!srst_n) begin
+            cap_cnt <= 10'd0;
+            cap_run <= 1'b0;
+        end else if (cap_go) begin
+            cap_cnt <= 10'd0;
+            cap_run <= 1'b1;
+        end else if (scope_tick && cap_run) begin
+            if (cap_cnt == 10'd479)
+                cap_run <= 1'b0;          // buffer full -> hold
+            else
+                cap_cnt <= cap_cnt + 10'd1;
+        end
+    end
+
+    wire cap_we = scope_tick && cap_run;
+
 
     //------------------------------------------------------------------
     // Lissajous pre-renderer
@@ -943,11 +951,9 @@ wire [15:0] mix_r;
     ) u_lcd (
         .clk      (clk_sys),
         .rst_n    (srst_n),
-        .wr_en_w  (scope_tick),
-        .wr_addr_w(wptr_w),
+        .wr_en_w  (cap_we),
+        .wr_addr_w(cap_cnt),
         .wr_data_w(scope_s),
-        .trig_addr(tsel),
-        .trig_ok  (tok),
         .wr_en_e  (env_wr),
         .wr_addr_e(wptr_e),
         .wr_data_e(env_max),

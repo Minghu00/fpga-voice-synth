@@ -46,19 +46,13 @@ module lcd_scope #(
     input  wire         clk,
     input  wire         rst_n,
 
-    // waveform history (one write per audio sample)
+    // waveform snapshot (one write per audio sample, 480 of them per capture)
+    // NOT a scrolling history: the top level captures one window when the set
+    // of pressed pads changes and then holds it.  See the long comment in
+    // top_inst.v for why a scrolling trace cannot be made to stand still.
     input  wire         wr_en_w,
     input  wire [9:0]   wr_addr_w,
     input  wire [15:0]  wr_data_w,
-
-    // waveform trigger: address of the most recent rising zero crossing.
-    // Without it a steady tone scrolls across the screen (free-running
-    // scope); with it the picture stands still.  The crossing has to be at
-    // least 480 samples old, so the addressing here is one bit wider than
-    // the 512-deep Lissajous buffer: 1024 deep leaves a 544-sample band of
-    // usable crossings instead of 32.
-    input  wire [9:0]   trig_addr,
-    input  wire         trig_ok,
 
     // envelope history (one write every 32nd audio sample)
     input  wire         wr_en_e,
@@ -164,20 +158,18 @@ module lcd_scope #(
     reg  [15:0] dp_w, dp_e;      // previous column
     reg  [1:0]  sw;              // sample-fetch step: 0/1/2
 
-    // The waveform history is 1024 deep, the envelope one still 512.  Both
-    // sums wrap inside their own buffer: base_* is (write pointer - 480) mod
-    // depth, so base + x is a valid address while x < 480.  The width has to
-    // match the depth exactly -- a wider sum would address the unwritten
-    // region and read back whatever happened to be there.
+    // The waveform buffer is a 1024 x 16 snapshot, the envelope one is a
+    // rolling 512.  Both sums wrap inside their own buffer: base_* + x is a
+    // valid address while x < 480.  The width has to match the depth exactly --
+    // a wider sum would address the unwritten region and read back whatever
+    // happened to be there.
     wire [9:0] iw0 = base_w + x[9:0];
     wire [8:0] ie0 = base_e + x[8:0];
 
-    // Window start for the frame that is about to be scanned.  This is a
-    // START trigger: the leftmost column is the crossing itself and the next
-    // 479 columns are the samples that follow it.  The crossing therefore has
-    // to be old enough for the whole window to have been written (>= 480),
-    // which is why the depth was raised to 1024 -- see wave_hist.v.
-    wire [9:0] wstart = trig_ok ? trig_addr : (wr_addr_w - 10'd480);
+    // The waveform window always starts at address 0: the top level stores the
+    // captured samples in 0..479 and holds them, so the picture is static by
+    // construction.  There is no trigger and no scrolling any more.
+    wire [9:0] wstart = 10'd0;
 
     // The envelope buffer is written once every ENV_DEC samples, so right after
     // reset it only holds a handful of points.  A fixed "now - 480" window
