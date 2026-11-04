@@ -1,0 +1,38 @@
+MIT License
+
+Copyright (c) 2026 明湖
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+Third-party material that is bundled for reference only and remains the
+property of its respective owners:
+
+  Tang_Primer_20K_Dock_3714_Schematics.pdf
+  Tang_Primer_20K_Dock_3709_ibom.html
+  Tang Primer 20K 规格书 V1.0.pdf
+  基于FPGA的实时多音色合成电子乐器引擎.pdf
+  docs/datasheet_ttp229/*
+  docs/figures/fig4_audio_sch.png
+  docs/figures/fig5_lcd_sch.png
+
+These are vendor datasheets, schematics and a competition brief, included so
+that the pin mapping in this repository can be verified against the hardware.
+The MIT grant above does not extend to them.

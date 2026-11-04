@@ -8,9 +8,9 @@
 - 控制信号 → 音频输出延迟 **62.38 µs**（赛题要求 ≤10 ms，余量 160×）
 - 混音吞吐量 **32 × 48 214.29 = 1.54 M 振荡器·次/秒**
 - 综合实测 **0 告警**，Fmax **109.49 MHz**（约束 108 MHz，setup slack **+0.126 ns**，0 个违例端点）。
-  波形页改用 1024 深私有缓存 + 声部 0 过零触发后，最差路径从
-  整套滚动触发机构删掉之后（改成单次捕获快照，见 `docs/音量与削波记录.md` 第 16 节）
-  的实测值；更早那版把余量挪到 +0.322 ns 的分析见 `docs/Fmax加固记录.md`。
+  这个数字是波形页改成「1024 深私有缓存 + 声部 0 触发」之后测到的；更早两版的收敛过程
+  （59.3 MHz 起步、以及把余量做到 +0.322 ns 的那次加固）记在 `docs/Fmax加固记录.md`
+  与 `docs/音量与削波记录.md` 第 16 节。
 - 支持**现场测试模式**（上电时按住 Key_3）：8 个声部输出 8 个不同频率的纯正弦，
   频谱上 8 根互不重叠的谱峰 → `docs/测试模式证据.md`
 - 支持**多波表模式**（长按 Key_3 约 0.8 s）：4 个加法分量各读一张独立波表
@@ -48,7 +48,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_inst.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_all_sim.ps1
 ```
 
-十五个自检 testbench（`tb_mixer16`、`tb_audio_out`、`tb_fx_rvb_cho`…）全部 `ALL PASS` 才算通过。需要 iverilog 在
+十七个自检 testbench（`tb_mixer16`、`tb_audio_out`、`tb_fx_rvb_cho`…）全部 `ALL PASS` 才算通过。需要 iverilog 在
 `D:\Gowin\tools\iverilog\bin`。单跑某个平台用 `scripts\sim.ps1 tb_inst`。
 
 ## 目录
@@ -61,7 +61,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_all_sim.ps1
 | `scripts/` | 构建与仿真的一键脚本 |
 | `tcl/` | `gw_sh` 批处理脚本（每套工程一个） |
 | `docs/datasheet_ttp229/` | TTP229 数据手册（PDF + 提取的 TXT） |
-| `legacy/` | 第一代手工 `synth_voice` 设计，已废弃，仅存档 |
+| `docs/figures/` | 技术文档用的框图与实物图（`scripts/make_doc_figs.py`、`make_ui_fig.py` 生成） |
+| `scripts/build_tech_doc.py` | 由官方模板生成《技术文档》DOCX |
+| `交付_技术文档_基于FPGA的实时多音色合成电子乐器.docx` | 24 页设计报告（8 表 9 图） |
 | `impl*/` | Gowin 输出（**不入库**，由 `scripts\build_*.ps1` 再生） |
 
 ### 四套工程
@@ -97,3 +99,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_all_sim.ps1
 3. **屏是 RGB555/666/555**，不是 888：R、B 各 5 位，G 6 位，低位在 Dock 上直接接地。
 4. `Silicone Key_n` 网络都有 **10 k 上拉到 +1V5**，按下才是 0，因此**不能**做
    电平型静音键（上电即静音）；现改为“音量 +1”按键。
+
+## 许可
+
+代码与文档以 **MIT 许可证**发布，见 `LICENSE`。仓库里随附的高云 / Sipeed 原理图、
+规格书、TTP229 数据手册与赛题指南仅作引脚核对之用，版权归各自所有者，不在 MIT 授权范围内。
+
+## 环境
+
+- 综合：Gowin EDA V1.9.11.03（Education），`gw_sh.exe`
+- 仿真：iverilog 12 + vvp（`-g2005`）
+- 生成文档：Python 3 + python-docx + Pillow
