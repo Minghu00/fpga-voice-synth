@@ -46,3 +46,7 @@ __pycache__/
 
 # 沙箱 ACL 修复备份（与设计无关）
 _aclrepair/
+
+# 交付压缩包（由 git archive 再生，不入库）
+交付_*.zip
+交付_*.rar
